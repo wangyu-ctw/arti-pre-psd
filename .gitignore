@@ -1,0 +1,39 @@
+# ── Python ──────────────────────────────────────────────────────────────
+__pycache__/
+.pycache/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+.venv-packager/
+.python-version
+*.egg-info/
+.eggs/
+
+# ── Node / Frontend ──────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+npm-debug.log*
+
+# TypeScript 编译产物（由 tsc / vite 生成，不需要提交）
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
+
+# ── 打包产物 (PyInstaller / build script) ────────────────────────────────
+build/
+dist/
+
+# ── 测试 / 临时输出 ────────────────────────────────────────────────────────
+_test_out/
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────
+.DS_Store
+.idea/
+*.swp
+*.swo
+
+# 保留 .vscode/settings.json（项目共享设置），如不希望共享请删除下面这行
+# .vscode/
