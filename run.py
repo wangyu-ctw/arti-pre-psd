@@ -117,12 +117,13 @@ def run_dev_mode() -> None:
     try:
         time.sleep(2)
         from backend.api import Api
+        from backend.settings import webview_size_kwargs
+
         webview.create_window(
             "Arti Pre PSD (dev)",
             "http://localhost:5173",
             js_api=Api(),
-            width=960,
-            height=720,
+            **webview_size_kwargs(),
         )
         webview.start(debug=True)
     finally:
@@ -142,12 +143,13 @@ def run_prod_mode() -> None:
         sys.exit(f"[run.py] 未找到 {index}，请先构建前端。")
 
     from backend.api import Api
+    from backend.settings import webview_size_kwargs
+
     webview.create_window(
         "Arti Pre PSD",
         str(index),
         js_api=Api(),
-        width=960,
-        height=720,
+        **webview_size_kwargs(),
     )
     webview.start()
 

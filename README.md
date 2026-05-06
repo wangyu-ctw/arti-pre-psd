@@ -22,14 +22,19 @@
       │
       ▼ 顺序执行多个 ExtendScript（每步包 try/on error 失败可跳过）
 backend/psExtendScript/
-  1. Delete All Empty Layers.jsx     # 删空图层 + 删所有"有效不可见"图层（fork 增强）
-  2. Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式（PS 自带）
-  3. flattenGroupsWithEffects.jsx    # 自身带 effects 的 LayerSet → 合并成单层（拼合可见+遵循剪切）
-  4. Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（PS 自带）
-  5. flattenClippingMasks.jsx        # 合并所有剪切蒙版组 + 栅格化 base 残留的 effects（修补步 2 漏）
-  6. trimLayersToCanvas.jsx          # 栅格化智能对象 + Image>Crop 裁掉所有画布外像素
-  7. Delete All Empty Layers.jsx     # 再来一次：合并 mask + 裁画布后产生的全透明残留层清掉
-  8. saveAsClean.jsx                 # 另存为 [原名]_clean.psd
+  0. ungroupArtboards.jsx            # 取消所有画板编组（先于删空层）
+  1. Delete All Empty Layers.jsx   # 删空图层 + 删所有"有效不可见"图层（fork 增强）
+  2. Flatten All Layer Effects.jsx # 栅格化所有 ArtLayer 的图层样式（PS 自带）
+  3. flattenGroupsWithEffects.jsx  # 自身带 effects 的 LayerSet → 合并成单层（拼合可见+遵循剪切）
+  4. Flatten All Masks.jsx         # 烧入图层蒙版到 alpha（PS 自带）
+  5. flattenClippingMasks.jsx      # 合并剪切蒙版组 + 栅格化 base 残留 effects 等
+  5b. deleteProblematicClipLayers.jsx
+  5c. flattenClippingMasks.jsx（再跑）
+  6. trimLayersToCanvas.jsx        # 裁掉画布外像素等
+  1b. Delete All Empty Layers.jsx  # 再跑删空
+  8. organizeLayerGroups.jsx       # 解散单子组
+  9. uniqueLayerNames.jsx          # 全文档图层/组名去重（_2、_3…）
+  → saveAsClean.jsx                # 另存为 [原名]_clean.psd
       │
       ▼ saveAsClean 末尾 IIFE return 路径
 [osascript stdout]
@@ -58,11 +63,15 @@ arti-pre-psd/
 │   ├── settings.py               # ~/.arti-pre-psd/settings.json 读写
 │   ├── psExtendScript/           # 跑在 Photoshop 里的 .jsx 脚本
 │   │   ├── README.md
+│   │   ├── ungroupArtboards.jsx              # 取消全部画板编组（清洗链第 0 步）
 │   │   ├── Delete All Empty Layers.jsx     # 已 fork 增强：兼删隐藏图层
 │   │   ├── Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式
 │   │   ├── flattenGroupsWithEffects.jsx    # 合并自身带 effects 的图层组
 │   │   ├── Flatten All Masks.jsx           # 烧入图层蒙版到 alpha
 │   │   ├── flattenClippingMasks.jsx        # 合并剪切蒙版组 + 栅格化 base 残留 effects
+│   │   ├── deleteProblematicClipLayers.jsx # 删问题剪切/调整层等（见脚本注释）
+│   │   ├── organizeLayerGroups.jsx         # 解散单子组
+│   │   ├── uniqueLayerNames.jsx            # 全文档图层与组名去重
 │   │   ├── trimLayersToCanvas.jsx          # 裁掉图层超出画布部分（Image > Crop）
 │   │   └── saveAsClean.jsx                 # 另存为 [原名]_clean.psd
 │   ├── requirements.txt          # 仅保留 pywebview / watchdog / psd-tools（备用）
@@ -121,7 +130,7 @@ python3 run.py --dev --watch  # 推荐组合
 1. 打开应用 → 自动检测 PS。
 2. 没检测到 → 点"选择 Photoshop 应用" → 系统对话框选 `.app` → 自动启动 PS。
 3. PS 就绪后 → 主区显示"点击选择 PSD 文件"。
-4. 选 PSD → 后端调 4 个脚本（**不接受任何参数**，规则是固定的）→ PS 处理（1~2 分钟）→ 完成提示。
+4. 选 PSD → 后端按固定顺序调用多个 ExtendScript（**不接受任何参数**）→ PS 处理（1~2 分钟）→ 完成提示。
 5. 输出文件位于原 PSD 同目录，命名 `<原名>_clean.psd`，重名自动 `_1` / `_2`。
 
 ---
@@ -134,7 +143,7 @@ python3 run.py --dev --watch  # 推荐组合
 | `ps_pick_app()`      | 弹原生 dialog 选 `.app`，写入 settings 并自动 launch                |
 | `ps_launch()`        | 启动 / 激活 PS（idempotent）                                        |
 | `pick_psd_file()`    | 弹原生 dialog 选 `.psd`，返回真实磁盘路径（不读字节，对大文件友好） |
-| `process_psd(path)`  | 同步阻塞：让 PS 跑 4 个 jsx，返回 `_clean.psd` 路径                 |
+| `process_psd(path)`  | 同步阻塞：让 PS 按顺序跑多个 jsx，返回 `_clean.psd` 路径            |
 | `open_external(url)` | `file://` / `mailto:` / `http(s)://` 交给系统默认程序               |
 
 ---
@@ -159,6 +168,7 @@ bash scripts/build_macos_app.sh
 ```
 
 脚本会自动完成：
+
 - 构建前端 `frontend/dist`
 - 安装 PyInstaller 打包依赖
 - 把 PNG 转成 `.icns`
@@ -178,8 +188,13 @@ open "dist/Artiprepsd.app"
 
 ```json
 {
-  "ps_app_path": "/Applications/Adobe Photoshop 2026/Adobe Photoshop 2026.app"
+  "ps_app_path": "/Applications/Adobe Photoshop 2026/Adobe Photoshop 2026.app",
+  "window_width": 1200,
+  "window_height": 900
 }
 ```
 
-只存"用户手动选过的 PS 路径"。删掉它会让下次启动重新自动扫描。
+`ps_app_path`：用户手动选过的 PS 路径；删掉它会让下次启动重新自动扫描。  
+`window_width` / `window_height`：可选，合法范围约 400～7680 像素；不写则用 `settings.py` 里的默认 960×720。
+
+主窗口默认宽高在 `backend/settings.py` 的 `WEBVIEW_WIDTH_DEFAULT` / `WEBVIEW_HEIGHT_DEFAULT`；`run.py` 与 `app_main.py` 通过 `webview_size_kwargs()` 读取。也可在 `settings.json` 里写可选整数键 `window_width`、`window_height` 覆盖默认。

@@ -177,8 +177,67 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def pick_psd_files(self) -> dict[str, Any]:
+        """弹原生 dialog 让用户多选 .psd / .psb 文件，返回路径数组。"""
+        try:
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+
+            picked = win.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=True,
+                file_types=("Photoshop files (*.psd;*.psb)",),
+            )
+            if not picked:
+                return {"ok": False, "error": "用户取消选择"}
+
+            items: list[dict[str, Any]] = []
+            for path in picked:
+                p = Path(path)
+                if not p.is_file():
+                    return {"ok": False, "error": f"文件不存在：{path}"}
+                if p.suffix.lower() not in (".psd", ".psb"):
+                    return {"ok": False, "error": f"非 PSD/PSB 文件：{p.suffix}"}
+                items.append({
+                    "path": str(p),
+                    "name": p.name,
+                    "size_bytes": p.stat().st_size,
+                })
+            return {"ok": True, "data": items}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def pick_psd_only_file(self) -> dict[str, Any]:
+        """弹原生 dialog，仅可选 .psd（不含 .psb），返回真实路径。"""
+        try:
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+
+            picked = win.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=("PSD (*.psd)",),
+            )
+            if not picked:
+                return {"ok": False, "error": "用户取消选择"}
+            path = picked[0]
+            p = Path(path)
+            if not p.is_file():
+                return {"ok": False, "error": f"文件不存在：{path}"}
+            if p.suffix.lower() != ".psd":
+                return {"ok": False, "error": f"仅支持 .psd 文件：{p.suffix}"}
+            return {"ok": True, "data": {
+                "path": str(p),
+                "name": p.name,
+                "size_bytes": p.stat().st_size,
+            }}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def process_psd(self, file_path: str) -> dict[str, Any]:
-        """主入口：用 PS 跑 4 个 ExtendScript 脚本，返回 _clean.psd 路径。
+        """主入口：用 PS 按顺序跑多个 ExtendScript 脚本，返回 _clean.psd 路径。
 
         本调用是同步阻塞的——大 PSD 可能要 1~2 分钟，前端要做 loading 反馈。
         失败时尽量返回可读的 error 字符串。

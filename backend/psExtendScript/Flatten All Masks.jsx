@@ -30,9 +30,6 @@
 // Macintosh Finder or the Windows Explorer
 #target photoshop
 
-// Make Photoshop the frontmost application
-app.bringToFront();
-
 /////////////////////////
 // SETUP
 /////////////////////////

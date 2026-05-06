@@ -11,6 +11,7 @@ from pathlib import Path
 import webview
 
 from backend.api import Api
+from backend.settings import webview_size_kwargs
 
 
 def _resource_root() -> Path:
@@ -32,8 +33,7 @@ def main() -> None:
         "Artiprepsd",
         str(index),
         js_api=Api(),
-        width=960,
-        height=720,
+        **webview_size_kwargs(),
     )
     webview.start()
 

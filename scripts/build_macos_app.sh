@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="Artiprepsd"
+APP_NAME="ArtiprePSD"
 ICON_PNG="${1:-"$ROOT/assets/app-icon.png"}"
 BUILD_DIR="$ROOT/build/macos"
 ICON_ICNS="$BUILD_DIR/$APP_NAME.icns"

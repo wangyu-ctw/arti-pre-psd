@@ -1,17 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   App as AntApp,
   Button,
+  List,
+  Popover,
   Result,
   Spin,
   Typography,
 } from "antd";
 import {
   CheckCircleOutlined,
+  ClockCircleOutlined,
   ExclamationCircleOutlined,
   InboxOutlined,
-  LoadingOutlined,
+  InfoCircleOutlined,
+  IssuesCloseOutlined,
 } from "@ant-design/icons";
 import { getApi } from "../api";
 import type {
@@ -22,13 +26,30 @@ import type {
 
 const { Text, Title } = Typography;
 
+export type PreprocessBadgeState =
+  | "none"
+  | "running"
+  | "success"
+  | "warning"
+  | "error";
+
 type Stage =
-  | "loading_status"   // 启动时检测 PS
-  | "ps_missing"       // 没找到 PS，需用户手选
-  | "idle"             // PS 就绪，等用户选 PSD
-  | "running"          // PS 正在跑 4 个脚本
-  | "success"          // 处理完成
-  | "failure";         // 处理失败
+  | "loading_status"
+  | "ps_missing"
+  | "idle"
+  | "running"
+  | "success"
+  | "failure";
+
+type QueueItemStatus = "queued" | "running" | "success" | "warning" | "failed";
+
+type QueueItem = {
+  id: string;
+  pick: PickPsdFilePayload;
+  status: QueueItemStatus;
+  result?: ProcessPsdPayload;
+  error?: string;
+};
 
 const FULL_HEIGHT_BOX: React.CSSProperties = {
   height: "100%",
@@ -53,18 +74,55 @@ const DROP_AREA: React.CSSProperties = {
   transition: "border-color 0.2s, background 0.2s",
 };
 
-export function PsdUploader() {
+const QUEUE_WRAP: React.CSSProperties = {
+  height: "100%",
+  minHeight: 0,
+  background: "#ffffff",
+  borderRadius: 8,
+  border: "1px solid #e5e7eb",
+  padding: 16,
+  display: "flex",
+  flexDirection: "column",
+  gap: 12,
+};
+
+type PsdUploaderProps = {
+  onBadgeStateChange?: (state: PreprocessBadgeState) => void;
+};
+
+export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
   const { message } = AntApp.useApp();
   const [stage, setStage] = useState<Stage>("loading_status");
   const [status, setStatus] = useState<PsStatusPayload | null>(null);
-  const [picked, setPicked] = useState<PickPsdFilePayload | null>(null);
-  const [result, setResult] = useState<ProcessPsdPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const badgeState = useMemo<PreprocessBadgeState>(() => {
+    if (stage === "running") return "running";
+    if (stage === "ps_missing") return "error";
+    if (stage === "failure" && queue.length === 0) return "error";
+    if (queue.length === 0) return "none";
+
+    const successCount = queue.filter((it) => it.status === "success").length;
+    const warningCount = queue.filter((it) => it.status === "warning").length;
+    const failedCount = queue.filter((it) => it.status === "failed").length;
+    const hasPending = queue.some((it) => it.status === "queued" || it.status === "running");
+
+    if (hasPending) return "running";
+    if (failedCount === queue.length) return "error";
+    if (failedCount > 0 || warningCount > 0) return "warning";
+    if (successCount === queue.length) return "success";
+    return "none";
+  }, [queue, stage]);
+
+  useEffect(() => {
+    onBadgeStateChange?.(badgeState);
+  }, [badgeState, onBadgeStateChange]);
 
   async function refreshStatus() {
     setStage("loading_status");
@@ -72,14 +130,14 @@ export function PsdUploader() {
       const api = await getApi();
       const r = await api.ps_get_status();
       if (!r.ok || !r.data) {
-        setError(r.error ?? "ps_get_status 失败");
+        setGlobalError(r.error ?? "ps_get_status 失败");
         setStage("failure");
         return;
       }
       setStatus(r.data);
       setStage(r.data.ready ? "idle" : "ps_missing");
     } catch (e) {
-      setError(String(e));
+      setGlobalError(String(e));
       setStage("failure");
     }
   }
@@ -104,72 +162,218 @@ export function PsdUploader() {
         );
       }
     } catch (e) {
-      message.error(String(e));
+      setGlobalError(String(e));
+      setStage("failure");
     }
   }
 
-  async function handlePickPsdAndProcess() {
+  async function handlePickPsdAndProcessQueue() {
     try {
       const api = await getApi();
-      const pick = await api.pick_psd_file();
+      const pick = await api.pick_psd_files();
       if (!pick.ok || !pick.data) {
         if (pick.error && pick.error !== "用户取消选择") {
           message.error(pick.error);
         }
         return;
       }
-      setPicked(pick.data);
-      setError(null);
-      setResult(null);
+
+      const initialQueue: QueueItem[] = pick.data.map((p, idx) => ({
+        id: `${Date.now()}-${idx}-${p.path}`,
+        pick: p,
+        status: "queued",
+      }));
+      setQueue(initialQueue);
+      setGlobalError(null);
       setStage("running");
 
-      const proc = await api.process_psd(pick.data.path);
-      if (!proc.ok || !proc.data) {
-        setError(proc.error ?? "处理失败");
-        setStage("failure");
-        return;
+      let workQueue = initialQueue.slice();
+      for (let i = 0; i < workQueue.length; i++) {
+        workQueue[i] = { ...workQueue[i], status: "running", error: undefined, result: undefined };
+        setQueue(workQueue.slice());
+
+        const proc = await api.process_psd(workQueue[i].pick.path);
+        if (!proc.ok || !proc.data) {
+          workQueue[i] = { ...workQueue[i], status: "failed", error: proc.error ?? "处理失败" };
+          setQueue(workQueue.slice());
+          continue;
+        }
+        workQueue[i] = {
+          ...workQueue[i],
+          status: proc.data.step_errors ? "warning" : "success",
+          result: proc.data,
+        };
+        setQueue(workQueue.slice());
       }
-      setResult(proc.data);
-      setStage("success");
+
+      const hasNonFailed = workQueue.some((it) => it.status === "success" || it.status === "warning");
+      setStage(hasNonFailed ? "success" : "failure");
     } catch (e) {
-      setError(String(e));
+      setGlobalError(String(e));
       setStage("failure");
     }
   }
 
-  function reset() {
-    setPicked(null);
-    setResult(null);
-    setError(null);
+  function resetToIdle() {
+    setQueue([]);
+    setGlobalError(null);
     setStage(status?.ready ? "idle" : "ps_missing");
   }
 
-  async function openFolder(dir: string) {
-    try {
-      const api = await getApi();
-      const r = await api.open_external(`file://${dir}`);
-      if (!r.ok) message.error(r.error ?? "无法打开文件夹");
-    } catch (e) {
-      message.error(String(e));
-    }
+  function statusText(s: QueueItemStatus): string {
+    if (s === "queued") return "排队中";
+    if (s === "running") return "执行中";
+    if (s === "success") return "处理完成";
+    if (s === "warning") return "处理完成（部分步骤被跳过）";
+    return "处理失败";
   }
 
-  async function openInPs(filePath: string) {
-    try {
-      const api = await getApi();
-      const r = await api.open_psd_in_ps(filePath);
-      if (!r.ok) message.error(r.error ?? "无法在 Photoshop 中打开");
-    } catch (e) {
-      message.error(String(e));
-    }
+  function warningPopoverContent(stepErrors: string | undefined) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        message="以下步骤出错被跳过，文件已经保存但可能不完美"
+        description={
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: 12,
+              color: "#92400e",
+              maxHeight: 240,
+              overflow: "auto",
+            }}
+          >
+            {stepErrors}
+          </pre>
+        }
+        style={{ width: 420, textAlign: "left" }}
+      />
+    );
   }
 
-  // ---- 各 stage 渲染 ----
+  function failedPopoverContent(err: string | undefined) {
+    return (
+      <p style={{ color: "#b91c1c", whiteSpace: "pre-wrap", maxWidth: 420, margin: 0 }}>
+        {err ?? "未知错误"}
+      </p>
+    );
+  }
+
+  function statusIcon(item: QueueItem) {
+    if (item.status === "queued" || item.status === "running") {
+      return <ClockCircleOutlined style={{ color: "#1677ff" }} />;
+    }
+    if (item.status === "success") {
+      return <CheckCircleOutlined style={{ color: "#52c41a" }} />;
+    }
+    if (item.status === "warning") {
+      return (
+        <Popover placement="left" title="部分步骤被跳过" content={warningPopoverContent(item.result?.step_errors)}>
+          <IssuesCloseOutlined style={{ color: "#faad14", cursor: "pointer" }} />
+        </Popover>
+      );
+    }
+    return (
+      <Popover placement="left" title="处理失败详情" content={failedPopoverContent(item.error)}>
+        <InfoCircleOutlined style={{ color: "#ff4d4f", cursor: "pointer" }} />
+      </Popover>
+    );
+  }
+
+  function handleCancel(id: string) {
+    setQueue(queue.filter((it) => it.id !== id));
+  }
+
+  function handleViewResult(id: string) {
+    console.log(id);
+  }
+
+  function getItemActions(item: QueueItem) {
+    if (item.status === "queued") {
+      return [<Button key="cancel" type="link" onClick={() => void handleCancel(item.id)}>
+        取消
+      </Button>];
+    }
+    if (item.status === "warning" || item.status === "success") {
+      return [<Button key="view" type="link" onClick={() => void handleViewResult(item.id)}>
+          标注
+      </Button>];
+    }
+    return [<div style={{minWidth: 67}}/>];
+  }
+
+  function renderQueueList(title: string, hint?: string) {
+    return (
+      <div style={QUEUE_WRAP}>
+        <div>
+          <Title level={5} style={{ margin: 0 }}>
+            {title}
+          </Title>
+          {hint ? (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {hint}
+            </Text>
+          ) : null}
+          {globalError ? (
+            <div style={{ marginTop: 8 }}>
+              <Text type="danger">{globalError}</Text>
+            </div>
+          ) : null}
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <List
+            dataSource={queue}
+            pagination={false}
+            locale={{ emptyText: "暂无队列文件" }}
+            renderItem={(item) => (
+              <List.Item actions={[getItemActions(item)]}>
+                <div>{item.pick.name}</div>
+                <div>{statusIcon(item)}{" "}{statusText(item.status)}</div>
+              </List.Item>
+            )}
+          />
+        </div>
+
+        {(stage === "success" || stage === "failure") && (
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <Button onClick={resetToIdle}>返回</Button>
+            <Button type="primary" onClick={() => void handlePickPsdAndProcessQueue()}>
+              再处理一批
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function runningHint() {
+    const total = queue.length;
+    const done = queue.filter(
+      (it) => it.status === "success" || it.status === "warning" || it.status === "failed",
+    ).length;
+    return `串行处理中：${done}/${total}，失败不会阻塞后续文件`;
+  }
+
+  function successHint() {
+    const successCount = queue.filter((it) => it.status === "success").length;
+    const warningCount = queue.filter((it) => it.status === "warning").length;
+    const failedCount = queue.filter((it) => it.status === "failed").length;
+    return `全部完成：成功 ${successCount}，部分步骤跳过 ${warningCount}，失败 ${failedCount}`;
+  }
+
+  function failureHint() {
+    const failedCount = queue.filter((it) => it.status === "failed").length;
+    return `本批次全部失败，共 ${failedCount} 个文件`;
+  }
 
   if (stage === "loading_status") {
     return (
       <div style={FULL_HEIGHT_BOX}>
-        <Spin tip="检测 Photoshop 状态..." size="large">
+        <Spin description="检测 Photoshop 状态..." size="large">
           <div style={{ width: 200, height: 60 }} />
         </Spin>
       </div>
@@ -195,136 +399,21 @@ export function PsdUploader() {
   }
 
   if (stage === "running") {
-    return (
-      <div style={FULL_HEIGHT_BOX}>
-        <Spin indicator={<LoadingOutlined style={{ fontSize: 48 }} spin />} />
-        <div style={{ marginTop: 24, textAlign: "center" }}>
-          <Title level={5} style={{ margin: 0 }}>
-            Photoshop 正在处理中...
-          </Title>
-          {picked && (
-            <Text type="secondary">
-              {picked.name}（{formatBytes(picked.size_bytes)}）
-            </Text>
-          )}
-          <div style={{ marginTop: 12, color: "#9ca3af", fontSize: 12 }}>
-            大文件可能需要 1~2 分钟，请勿关闭 Photoshop。
-          </div>
-        </div>
-      </div>
-    );
+    return renderQueueList("Photoshop 队列处理中...", runningHint());
   }
 
   if (stage === "success") {
-    const hasStepErrors = !!result?.step_errors;
-    return (
-      <div style={{ ...FULL_HEIGHT_BOX, border: "1px solid #e5e7eb" }}>
-        <Result
-          status={hasStepErrors ? "warning" : "success"}
-          icon={
-            hasStepErrors ? (
-              <ExclamationCircleOutlined style={{ color: "#faad14" }} />
-            ) : (
-              <CheckCircleOutlined />
-            )
-          }
-          title={hasStepErrors ? "处理完成（部分步骤被跳过）" : "处理完成"}
-          subTitle={result?.path}
-          extra={[
-            <Button
-              key="ps-check"
-              type="default"
-              onClick={() => result?.path && void openInPs(result.path)}
-            >
-              人工PS检查
-            </Button>,
-            <Button
-              key="next"
-              type="primary"
-              onClick={() => {
-                reset();
-                void handlePickPsdAndProcess();
-              }}
-            >
-              再处理一个
-            </Button>,
-            result?.directory ? (
-              <Button key="open" onClick={() => void openFolder(result.directory)}>
-                打开所在文件夹
-              </Button>
-            ) : null,
-            <Button key="back" onClick={reset}>
-              返回
-            </Button>,
-          ]}
-        >
-          {hasStepErrors && (
-            <Alert
-              type="warning"
-              showIcon
-              message="以下步骤出错被跳过，文件已经保存但可能不完美"
-              description={
-                <pre
-                  style={{
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontSize: 12,
-                    color: "#92400e",
-                    maxHeight: 240,
-                    overflow: "auto",
-                  }}
-                >
-                  {result!.step_errors}
-                </pre>
-              }
-              style={{ textAlign: "left" }}
-            />
-          )}
-        </Result>
-      </div>
-    );
+    return renderQueueList("队列处理完成", successHint());
   }
 
   if (stage === "failure") {
-    return (
-      <div style={{ ...FULL_HEIGHT_BOX, border: "1px solid #e5e7eb" }}>
-        <Result
-          status="error"
-          title="处理失败"
-          subTitle={picked?.name}
-          extra={[
-            <Button key="reset" type="primary" onClick={reset}>
-              重新开始
-            </Button>,
-            <Button key="refresh" onClick={() => void refreshStatus()}>
-              重新检测 Photoshop
-            </Button>,
-          ]}
-        >
-          <div
-            style={{
-              padding: 12,
-              background: "#fef2f2",
-              borderRadius: 4,
-              maxHeight: 240,
-              overflow: "auto",
-            }}
-          >
-            <p style={{ color: "#b91c1c", whiteSpace: "pre-wrap" }}>
-              {error}
-            </p>
-          </div>
-        </Result>
-      </div>
-    );
+    return renderQueueList("队列处理失败", failureHint());
   }
 
-  // stage === "idle"
   return (
     <div
       style={DROP_AREA}
-      onClick={() => void handlePickPsdAndProcess()}
+      onClick={() => void handlePickPsdAndProcessQueue()}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "#4f8cff";
         e.currentTarget.style.background = "#f0f7ff";
@@ -336,24 +425,12 @@ export function PsdUploader() {
     >
       <div style={{ textAlign: "center" }}>
         <InboxOutlined style={{ fontSize: 56, color: "#4f8cff" }} />
-        <div style={{ marginTop: 16, fontSize: 16 }}>点击选择 PSD 文件（不支持拖拽上传）</div>
+        <div style={{ marginTop: 16, fontSize: 16 }}>点击选择多个 PSD 文件（串行排队处理）</div>
         <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
-          仅支持 .psd / .psb；选中后会让 Photoshop 自动清洗
+          仅支持 .psd / .psb；失败不会阻塞后续文件
           <p style={{ color: "red" }}>*执行前请确保你的ps里没有正在编辑的文件</p>
         </div>
       </div>
     </div>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (!bytes) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  let n = bytes;
-  let i = 0;
-  while (n >= 1024 && i < units.length - 1) {
-    n /= 1024;
-    i++;
-  }
-  return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
 }

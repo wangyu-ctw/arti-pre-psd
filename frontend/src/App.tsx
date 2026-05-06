@@ -1,13 +1,46 @@
-import { App as AntApp, Layout } from "antd";
+import { App as AntApp, Layout, Tabs } from "antd";
+import {
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  InfoCircleOutlined,
+  IssuesCloseOutlined,
+} from "@ant-design/icons";
+import { useMemo, useState } from "react";
 import { getApi } from "./api";
-import { PsdUploader } from "./components/PsdUploader";
+import { AnnotatorWorkspace } from "./components/AnnotatorWorkspace";
+import { PsdUploader, type PreprocessBadgeState } from "./components/PsdUploader";
 
-const { Header, Content, Footer } = Layout;
+const { Content, Footer } = Layout;
+
+const contentAreaStyle: React.CSSProperties = {
+  height: "calc(100vh - 108px)",
+  padding: "0 0 12px",
+};
 
 const CONTACT_EMAIL = "wang.yu1@ctw.inc";
 
 export default function App() {
   const { message } = AntApp.useApp();
+  const [preprocessBadge, setPreprocessBadge] = useState<PreprocessBadgeState>("none");
+
+  const preprocessLabel = useMemo(() => {
+    let icon: React.ReactNode = null;
+    if (preprocessBadge === "running") {
+      icon = <ClockCircleOutlined style={{ color: "#1677ff" }} />;
+    } else if (preprocessBadge === "success") {
+      icon = <CheckCircleOutlined style={{ color: "#52c41a" }} />;
+    } else if (preprocessBadge === "warning") {
+      icon = <IssuesCloseOutlined style={{ color: "#faad14" }} />;
+    } else if (preprocessBadge === "error") {
+      icon = <InfoCircleOutlined style={{ color: "#ff4d4f" }} />;
+    }
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <span>预处理</span>
+        {icon}
+      </span>
+    );
+  }, [preprocessBadge]);
 
   async function openMail() {
     try {
@@ -21,30 +54,31 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: "100vh", background: "#f5f7fa" }}>
-      <Header
-        style={{
-          height: 48,
-          lineHeight: "32px",
-          padding: "8px 16px",
-          background: "#ffffff",
-          borderBottom: "1px solid #e5e7eb",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div style={{ fontSize: 14, fontWeight: 500, color: "#374151" }}>
-          Arti Pre PSD
-        </div>
-        <div style={{ fontSize: 12, color: "#9ca3af" }}>
-          自动清洗<span style={{ color: "red" }}>*执行前请确保你的ps里没有正在编辑的文件</span>
-        </div>
-      </Header>
-
-      <Content style={{ padding: 24 }}>
-        <div style={{ height: "calc(100vh - 140px)" }}>
-          <PsdUploader />
-        </div>
+      <Content>
+        <Tabs
+          styles={{content: {padding: "0 24px"}, header: {padding: "0 24px"}}}
+          defaultActiveKey="preprocess"
+          items={[
+            {
+              key: "preprocess",
+              label: preprocessLabel,
+              children: (
+                <div style={contentAreaStyle}>
+                  <PsdUploader onBadgeStateChange={setPreprocessBadge} />
+                </div>
+              ),
+            },
+            {
+              key: "annotator",
+              label: "标注器",
+              children: (
+                <div style={contentAreaStyle}>
+                  <AnnotatorWorkspace />
+                </div>
+              ),
+            },
+          ]}
+        />
       </Content>
 
       <Footer

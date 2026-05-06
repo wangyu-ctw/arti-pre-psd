@@ -57,9 +57,14 @@ export interface PyApi {
 
   /** 弹原生 dialog 选 .psd / .psb 文件，返回真实磁盘路径（不读字节）。 */
   pick_psd_file: () => Promise<BackendResult<PickPsdFilePayload>>;
+  /** 弹原生 dialog 多选 .psd / .psb 文件，返回路径数组。 */
+  pick_psd_files: () => Promise<BackendResult<PickPsdFilePayload[]>>;
+
+  /** 弹原生 dialog 仅可选 .psd（不含 .psb）。 */
+  pick_psd_only_file: () => Promise<BackendResult<PickPsdFilePayload>>;
 
   /**
-   * 同步阻塞调用：让 PS 跑 4 个 jsx 串联清洗，返回 _clean.psd 路径。
+   * 同步阻塞调用：让 PS 按顺序跑多个 jsx 串联清洗，返回 _clean.psd 路径。
    * 大 PSD 可能要 1~2 分钟，前端要做 loading 反馈。
    */
   process_psd: (file_path: string) => Promise<BackendResult<ProcessPsdPayload>>;
