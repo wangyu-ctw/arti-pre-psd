@@ -1,14 +1,16 @@
 import { ExportOutlined, FolderOpenOutlined, SelectOutlined } from "@ant-design/icons";
 import { App as AntApp, Button, Flex, Input, Splitter } from "antd";
-import { useState } from "react";
 import { getApi } from "../api";
+import { useAppStore } from "../store";
 
 /**
  * 标注器工作区 —— 英文名 Annotator Workspace（像素 / 语义标注等对 PSD 的后续操作）。
  */
 export function AnnotatorWorkspace() {
   const { message } = AntApp.useApp();
-  const [psdPath, setPsdPath] = useState("");
+
+  const annotatingFile           = useAppStore((s) => s.annotatingFile);
+  const requestSetAnnotatingFile = useAppStore((s) => s.requestSetAnnotatingFile);
 
   async function handlePickFile() {
     try {
@@ -18,14 +20,14 @@ export function AnnotatorWorkspace() {
         if (r.error && r.error !== "用户取消选择") message.error(r.error);
         return;
       }
-      setPsdPath(r.data.path);
+      requestSetAnnotatingFile(r.data.path);
     } catch (e) {
       message.error(String(e));
     }
   }
 
   async function handleOpenInPs() {
-    const p = psdPath.trim();
+    const p = annotatingFile.trim();
     if (!p) return;
     try {
       const api = await getApi();
@@ -46,9 +48,9 @@ export function AnnotatorWorkspace() {
         <Flex gap={8} align="center">
           <Input
             allowClear
-            style={{width: "50%"}}
-            value={psdPath}
-            onClear={() => setPsdPath("")}
+            style={{ width: "50%" }}
+            value={annotatingFile}
+            onClear={() => requestSetAnnotatingFile("")}
             placeholder="本地 PSD 文件路径"
           />
           <Button type="primary" icon={<SelectOutlined />} onClick={() => void handlePickFile()}>
@@ -56,7 +58,7 @@ export function AnnotatorWorkspace() {
           </Button>
           <Button
             icon={<FolderOpenOutlined />}
-            disabled={!psdPath.trim()}
+            disabled={!annotatingFile.trim()}
             onClick={() => void handleOpenInPs()}
           >
             用 PS 打开
@@ -64,14 +66,14 @@ export function AnnotatorWorkspace() {
           <Button
             icon={<ExportOutlined />}
             onClick={handleDownloadCsvPlaceholder}
-            disabled={!psdPath.trim()}
+            disabled={!annotatingFile.trim()}
           >
             导出 CSV
           </Button>
         </Flex>
       </div>
 
-      <Splitter orientation="horizontal" styles={{root:{ flex: 1, minHeight: 0 }, dragger: {background: "#f0f0f0"}}}>
+      <Splitter orientation="horizontal" styles={{ root: { flex: 1, minHeight: 0 }, dragger: { background: "#f0f0f0" } }}>
         <Splitter.Panel defaultSize="33.333%" min="16.666%" max="66.666%">
           <div style={{ height: "100%", minHeight: 0, overflow: "auto", padding: 8 }} />
         </Splitter.Panel>

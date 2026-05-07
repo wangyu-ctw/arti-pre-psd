@@ -5,10 +5,11 @@ import {
   InfoCircleOutlined,
   IssuesCloseOutlined,
 } from "@ant-design/icons";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { getApi } from "./api";
 import { AnnotatorWorkspace } from "./components/AnnotatorWorkspace";
-import { PsdUploader, type PreprocessBadgeState } from "./components/PsdUploader";
+import { PsdUploader } from "./components/PsdUploader";
+import { useAppStore, selectPreprocessBadge } from "./store";
 
 const { Content, Footer } = Layout;
 
@@ -21,7 +22,9 @@ const CONTACT_EMAIL = "wang.yu1@ctw.inc";
 
 export default function App() {
   const { message } = AntApp.useApp();
-  const [preprocessBadge, setPreprocessBadge] = useState<PreprocessBadgeState>("none");
+  const preprocessBadge = useAppStore(selectPreprocessBadge);
+  const activeTab       = useAppStore((s) => s.activeTab);
+  const setActiveTab    = useAppStore((s) => s.setActiveTab);
 
   const preprocessLabel = useMemo(() => {
     let icon: React.ReactNode = null;
@@ -57,14 +60,15 @@ export default function App() {
       <Content>
         <Tabs
           styles={{content: {padding: "0 24px"}, header: {padding: "0 24px"}}}
-          defaultActiveKey="preprocess"
+          activeKey={activeTab}
+          onChange={setActiveTab}
           items={[
             {
               key: "preprocess",
               label: preprocessLabel,
               children: (
                 <div style={contentAreaStyle}>
-                  <PsdUploader onBadgeStateChange={setPreprocessBadge} />
+                  <PsdUploader />
                 </div>
               ),
             },

@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect } from "react";
 import {
   Alert,
   App as AntApp,
   Button,
-  List,
   Popover,
   Result,
   Spin,
-  Typography,
+  Table,
+  Tooltip,
 } from "antd";
+import type { ColumnsType } from "antd/es/table";
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -16,40 +17,11 @@ import {
   InboxOutlined,
   InfoCircleOutlined,
   IssuesCloseOutlined,
+  LoadingOutlined,
 } from "@ant-design/icons";
 import { getApi } from "../api";
-import type {
-  PickPsdFilePayload,
-  ProcessPsdPayload,
-  PsStatusPayload,
-} from "../pywebview";
-
-const { Text, Title } = Typography;
-
-export type PreprocessBadgeState =
-  | "none"
-  | "running"
-  | "success"
-  | "warning"
-  | "error";
-
-type Stage =
-  | "loading_status"
-  | "ps_missing"
-  | "idle"
-  | "running"
-  | "success"
-  | "failure";
-
-type QueueItemStatus = "queued" | "running" | "success" | "warning" | "failed";
-
-type QueueItem = {
-  id: string;
-  pick: PickPsdFilePayload;
-  status: QueueItemStatus;
-  result?: ProcessPsdPayload;
-  error?: string;
-};
+import { useAppStore } from "../store";
+import type { QueueItem } from "../store";
 
 const FULL_HEIGHT_BOX: React.CSSProperties = {
   height: "100%",
@@ -86,43 +58,33 @@ const QUEUE_WRAP: React.CSSProperties = {
   gap: 12,
 };
 
-type PsdUploaderProps = {
-  onBadgeStateChange?: (state: PreprocessBadgeState) => void;
+const STATUS_TEXT = {
+  queued: "排队中",
+  running: "执行中",
+  success: "处理完成",
+  warning: "处理完成（部分步骤被跳过）",
+  failed: "处理失败",
 };
 
-export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
+export function PsdUploader() {
   const { message } = AntApp.useApp();
-  const [stage, setStage] = useState<Stage>("loading_status");
-  const [status, setStatus] = useState<PsStatusPayload | null>(null);
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [globalError, setGlobalError] = useState<string | null>(null);
+
+  const stage = useAppStore((s) => s.preprocessStage);
+  const queue = useAppStore((s) => s.queue);
+  const psStatus = useAppStore((s) => s.psStatus);
+  const setStage = useAppStore((s) => s.setPreprocessStage);
+  const setPreprocessError = useAppStore((s) => s.setPreprocessError);
+  const setPsStatus = useAppStore((s) => s.setPsStatus);
+  const initQueue   = useAppStore((s) => s.initQueue);
+  const appendQueue = useAppStore((s) => s.appendQueue);
+  const setQueue = useAppStore((s) => s.setQueue);
+  const cancelQueueItem = useAppStore((s) => s.cancelQueueItem);
+  const resetPreprocess = useAppStore((s) => s.resetPreprocess);
+  const requestSetAnnotatingFile = useAppStore((s) => s.requestSetAnnotatingFile);
 
   useEffect(() => {
-    void refreshStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    refreshStatus();
   }, []);
-
-  const badgeState = useMemo<PreprocessBadgeState>(() => {
-    if (stage === "running") return "running";
-    if (stage === "ps_missing") return "error";
-    if (stage === "failure" && queue.length === 0) return "error";
-    if (queue.length === 0) return "none";
-
-    const successCount = queue.filter((it) => it.status === "success").length;
-    const warningCount = queue.filter((it) => it.status === "warning").length;
-    const failedCount = queue.filter((it) => it.status === "failed").length;
-    const hasPending = queue.some((it) => it.status === "queued" || it.status === "running");
-
-    if (hasPending) return "running";
-    if (failedCount === queue.length) return "error";
-    if (failedCount > 0 || warningCount > 0) return "warning";
-    if (successCount === queue.length) return "success";
-    return "none";
-  }, [queue, stage]);
-
-  useEffect(() => {
-    onBadgeStateChange?.(badgeState);
-  }, [badgeState, onBadgeStateChange]);
 
   async function refreshStatus() {
     setStage("loading_status");
@@ -130,14 +92,14 @@ export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
       const api = await getApi();
       const r = await api.ps_get_status();
       if (!r.ok || !r.data) {
-        setGlobalError(r.error ?? "ps_get_status 失败");
+        setPreprocessError(r.error ?? "ps_get_status 失败");
         setStage("failure");
         return;
       }
-      setStatus(r.data);
+      setPsStatus(r.data);
       setStage(r.data.ready ? "idle" : "ps_missing");
     } catch (e) {
-      setGlobalError(String(e));
+      setPreprocessError(String(e));
       setStage("failure");
     }
   }
@@ -152,7 +114,7 @@ export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
         }
         return;
       }
-      setStatus(r.data);
+      setPsStatus(r.data);
       if (r.data.ready) {
         setStage("idle");
         message.success(
@@ -162,12 +124,12 @@ export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
         );
       }
     } catch (e) {
-      setGlobalError(String(e));
+      setPreprocessError(String(e));
       setStage("failure");
     }
   }
 
-  async function handlePickPsdAndProcessQueue() {
+  async function handlePickPsdAndProcessQueue(append = false) {
     try {
       const api = await getApi();
       const pick = await api.pick_psd_files();
@@ -178,197 +140,172 @@ export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
         return;
       }
 
-      const initialQueue: QueueItem[] = pick.data.map((p, idx) => ({
-        id: `${Date.now()}-${idx}-${p.path}`,
-        pick: p,
-        status: "queued",
-      }));
-      setQueue(initialQueue);
-      setGlobalError(null);
-      setStage("running");
-
-      let workQueue = initialQueue.slice();
-      for (let i = 0; i < workQueue.length; i++) {
-        workQueue[i] = { ...workQueue[i], status: "running", error: undefined, result: undefined };
-        setQueue(workQueue.slice());
-
-        const proc = await api.process_psd(workQueue[i].pick.path);
-        if (!proc.ok || !proc.data) {
-          workQueue[i] = { ...workQueue[i], status: "failed", error: proc.error ?? "处理失败" };
-          setQueue(workQueue.slice());
-          continue;
-        }
-        workQueue[i] = {
-          ...workQueue[i],
-          status: proc.data.step_errors ? "warning" : "success",
-          result: proc.data,
-        };
-        setQueue(workQueue.slice());
+      // append=true 时保留历史记录追加，否则清空重建
+      if (append) {
+        appendQueue(pick.data);
+      } else {
+        initQueue(pick.data);
       }
+      const paths = pick.data.map((p) => p.path);
 
-      const hasNonFailed = workQueue.some((it) => it.status === "success" || it.status === "warning");
-      setStage(hasNonFailed ? "success" : "failure");
+      try {
+        const openAll = await api.open_psd_queue(paths);
+        if (!openAll.ok) {
+          setPreprocessError(openAll.error ?? "无法在 Photoshop 中打开队列文件");
+          setStage("failure");
+          return;
+        }
+
+        // 只处理本次新加入（status="queued"）的条目，历史条目不重复跑
+        let workQueue = useAppStore.getState().queue.slice();
+        const startIdx = workQueue.findIndex((it) => it.status === "queued");
+        for (let i = startIdx < 0 ? 0 : startIdx; i < workQueue.length; i++) {
+          workQueue[i] = { ...workQueue[i], status: "running", error: undefined, result: undefined };
+          setQueue(workQueue.slice());
+
+          const proc = await api.process_psd(workQueue[i].pick.path, true);
+          if (!proc.ok || !proc.data) {
+            workQueue[i] = { ...workQueue[i], status: "failed", error: proc.error ?? "处理失败" };
+          } else {
+            workQueue[i] = {
+              ...workQueue[i],
+              status: proc.data.step_errors ? "warning" : "success",
+              result: proc.data,
+            };
+          }
+          setQueue(workQueue.slice());
+        }
+
+        const hasNonFailed = workQueue.some(
+          (it) => it.status === "success" || it.status === "warning",
+        );
+        setStage(hasNonFailed ? "success" : "failure");
+      } catch (e) {
+        setPreprocessError(String(e));
+        setStage("failure");
+      } finally {
+        void api.focus_app();
+      }
     } catch (e) {
-      setGlobalError(String(e));
+      setPreprocessError(String(e));
       setStage("failure");
     }
   }
 
-  function resetToIdle() {
-    setQueue([]);
-    setGlobalError(null);
-    setStage(status?.ready ? "idle" : "ps_missing");
-  }
-
-  function statusText(s: QueueItemStatus): string {
-    if (s === "queued") return "排队中";
-    if (s === "running") return "执行中";
-    if (s === "success") return "处理完成";
-    if (s === "warning") return "处理完成（部分步骤被跳过）";
-    return "处理失败";
-  }
-
-  function warningPopoverContent(stepErrors: string | undefined) {
-    return (
-      <Alert
-        type="warning"
-        showIcon
-        message="以下步骤出错被跳过，文件已经保存但可能不完美"
-        description={
-          <pre
-            style={{
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontSize: 12,
-              color: "#92400e",
-              maxHeight: 240,
-              overflow: "auto",
-            }}
-          >
-            {stepErrors}
-          </pre>
-        }
-        style={{ width: 420, textAlign: "left" }}
-      />
-    );
-  }
-
-  function failedPopoverContent(err: string | undefined) {
-    return (
-      <p style={{ color: "#b91c1c", whiteSpace: "pre-wrap", maxWidth: 420, margin: 0 }}>
-        {err ?? "未知错误"}
-      </p>
-    );
-  }
-
   function statusIcon(item: QueueItem) {
-    if (item.status === "queued" || item.status === "running") {
+    if (item.status === "queued") {
       return <ClockCircleOutlined style={{ color: "#1677ff" }} />;
+    } else if (item.status === "running") {
+      return <LoadingOutlined style={{ color: "#1677ff" }} spin />;
     }
     if (item.status === "success") {
       return <CheckCircleOutlined style={{ color: "#52c41a" }} />;
     }
     if (item.status === "warning") {
       return (
-        <Popover placement="left" title="部分步骤被跳过" content={warningPopoverContent(item.result?.step_errors)}>
+        <Popover
+          placement="left"
+          title="部分步骤被跳过"
+          content={      <Alert
+            type="warning"
+            showIcon
+            message="以下步骤出错被跳过，文件已经保存但可能不完美"
+            description={
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontSize: 12,
+                  color: "#92400e",
+                  maxHeight: 240,
+                  overflow: "auto",
+                }}
+              >
+                {item.result?.step_errors}
+              </pre>
+            }
+            style={{ width: 420, textAlign: "left" }}
+          />}
+        >
           <IssuesCloseOutlined style={{ color: "#faad14", cursor: "pointer" }} />
         </Popover>
       );
     }
     return (
-      <Popover placement="left" title="处理失败详情" content={failedPopoverContent(item.error)}>
+      <Popover
+        placement="left"
+        title="处理失败详情"
+        content={<p style={{ color: "#b91c1c", whiteSpace: "pre-wrap", maxWidth: 420, margin: 0 }}>
+          {item.error ?? "未知错误"}
+        </p>}
+      >
         <InfoCircleOutlined style={{ color: "#ff4d4f", cursor: "pointer" }} />
       </Popover>
     );
   }
 
-  function handleCancel(id: string) {
-    setQueue(queue.filter((it) => it.id !== id));
-  }
-
-  function handleViewResult(id: string) {
-    console.log(id);
-  }
-
-  function getItemActions(item: QueueItem) {
-    if (item.status === "queued") {
-      return [<Button key="cancel" type="link" onClick={() => void handleCancel(item.id)}>
-        取消
-      </Button>];
+  async function handleOpenInPs(item: QueueItem) {
+    const path = item.result?.path;
+    if (!path) return;
+    try {
+      const api = await getApi();
+      const r = await api.open_psd_in_ps(path);
+      if (!r.ok) message.error(r.error ?? "在 Photoshop 中打开失败");
+    } catch (e) {
+      message.error(String(e));
     }
-    if (item.status === "warning" || item.status === "success") {
-      return [<Button key="view" type="link" onClick={() => void handleViewResult(item.id)}>
-          标注
-      </Button>];
-    }
-    return [<div style={{minWidth: 67}}/>];
   }
 
-  function renderQueueList(title: string, hint?: string) {
-    return (
-      <div style={QUEUE_WRAP}>
+  function handleViewResult(item: QueueItem) {
+    const path = item.result?.path;
+    if (!path) return;
+    // switchTab=true：写入成功（含 confirm 确认后）自动跳转到标注器 Tab
+    requestSetAnnotatingFile(path, true);
+  }
+
+  const queueTableColumns: ColumnsType<QueueItem> = [
+    {
+      key: "name",
+      render: (_, item) => <div>{item.pick.name}</div>,
+    },
+    {
+      key: "status",
+      render: (_, item) => (
         <div>
-          <Title level={5} style={{ margin: 0 }}>
-            {title}
-          </Title>
-          {hint ? (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {hint}
-            </Text>
-          ) : null}
-          {globalError ? (
-            <div style={{ marginTop: 8 }}>
-              <Text type="danger">{globalError}</Text>
-            </div>
-          ) : null}
+          {statusIcon(item)}
+          {" "}
+          {STATUS_TEXT[item.status]}
         </div>
-
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <List
-            dataSource={queue}
-            pagination={false}
-            locale={{ emptyText: "暂无队列文件" }}
-            renderItem={(item) => (
-              <List.Item actions={[getItemActions(item)]}>
-                <div>{item.pick.name}</div>
-                <div>{statusIcon(item)}{" "}{statusText(item.status)}</div>
-              </List.Item>
-            )}
-          />
-        </div>
-
-        {(stage === "success" || stage === "failure") && (
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <Button onClick={resetToIdle}>返回</Button>
-            <Button type="primary" onClick={() => void handlePickPsdAndProcessQueue()}>
-              再处理一批
+      ),
+    },
+    {
+      key: "actions",
+      align: "right",
+      width: 120,
+      render: (_, item) => {
+        if (item.status === "queued") {
+          return (
+            <Button key="cancel" type="link" size="small" onClick={() => cancelQueueItem(item.id)}>
+              取消
+            </Button>);
+        }
+        if (item.status === "warning" || item.status === "success") {
+          return (<>
+            <Tooltip title="确保所有的psd文件处理完成再打开">
+              <Button key="open" type="link" size="small" onClick={() => void handleOpenInPs(item)}>
+                打开
+              </Button>
+            </Tooltip>
+            <Button key="view" type="link" size="small" onClick={() => void handleViewResult(item)}>
+              标注
             </Button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function runningHint() {
-    const total = queue.length;
-    const done = queue.filter(
-      (it) => it.status === "success" || it.status === "warning" || it.status === "failed",
-    ).length;
-    return `串行处理中：${done}/${total}，失败不会阻塞后续文件`;
-  }
-
-  function successHint() {
-    const successCount = queue.filter((it) => it.status === "success").length;
-    const warningCount = queue.filter((it) => it.status === "warning").length;
-    const failedCount = queue.filter((it) => it.status === "failed").length;
-    return `全部完成：成功 ${successCount}，部分步骤跳过 ${warningCount}，失败 ${failedCount}`;
-  }
-
-  function failureHint() {
-    const failedCount = queue.filter((it) => it.status === "failed").length;
-    return `本批次全部失败，共 ${failedCount} 个文件`;
-  }
+            </>);
+        }
+        return null;
+      },
+    },
+  ];
 
   if (stage === "loading_status") {
     return (
@@ -398,16 +335,74 @@ export function PsdUploader({ onBadgeStateChange }: PsdUploaderProps) {
     );
   }
 
-  if (stage === "running") {
-    return renderQueueList("Photoshop 队列处理中...", runningHint());
-  }
+  if (stage === "running" || stage === "success" || stage === "failure") {
+    let ResultStatus: React.ReactNode;
+    switch (stage) {
+      case "running":
+        const total = queue.length;
+        const done = queue.filter(
+          (it) => it.status === "success" || it.status === "warning" || it.status === "failed",
+        ).length;
+        ResultStatus = (
+          <Result
+            status="info"
+            icon={<ClockCircleOutlined style={{ color: "#1677ff" }} />}
+            title="队列处理中"
+            subTitle={`串行处理中：${done}/${total}`}
+          />);
+        break;
+      case "success":
+        const successCount = queue.filter((it) => it.status === "success").length;
+        const warningCount = queue.filter((it) => it.status === "warning").length;
+        const failedSCount  = queue.filter((it) => it.status === "failed").length;
+        ResultStatus = (
+          <Result
+            status="success"
+            icon={<CheckCircleOutlined style={{ color: "#52c41a" }} />}
+            title="队列处理完成"
+            subTitle={`全部完成：成功 ${successCount}，部分步骤跳过 ${warningCount}，失败 ${failedSCount}`}
+            extra={[
+              <Button key="reset" onClick={() => resetPreprocess(psStatus)}>返回</Button>,
+              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>再处理一批</Button>,
+            ]}
+          />);
+        break;
+      case "failure":
+        const failedCount = queue.filter((it) => it.status === "failed").length;
+        ResultStatus = (
+          <Result
+            status="error"
+            icon={<InfoCircleOutlined style={{ color: "#ff4d4f" }} />}
+            title="队列处理失败"
+            subTitle={`本批次全部失败，共 ${failedCount} 个文件`}
+            extra={[
+              <Button key="reset" onClick={() => resetPreprocess(psStatus)}>返回</Button>,
+              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>再处理一批</Button>,
+            ]}
+          />);
+        break;
+      default:
+        ResultStatus = null;
+        break;
+    }
 
-  if (stage === "success") {
-    return renderQueueList("队列处理完成", successHint());
-  }
-
-  if (stage === "failure") {
-    return renderQueueList("队列处理失败", failureHint());
+    return (
+      <div style={QUEUE_WRAP}>
+        {ResultStatus}
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", width: "60%", margin: "0 auto" }}>
+          <Table<QueueItem>
+            styles={{ root: { borderStartEndRadius: "0", borderRadius: "0" }, content: { borderStartEndRadius: "0", borderRadius: "0" } }}
+            showHeader={false}
+            dataSource={queue}
+            rowKey="id"
+            columns={queueTableColumns}
+            pagination={false}
+            locale={{ emptyText: "暂无队列文件" }}
+            size="small"
+          />
+        </div>
+    </div>
+    )
   }
 
   return (

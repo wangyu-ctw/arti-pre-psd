@@ -1,6 +1,8 @@
 // Unlock all locked layers/layer groups in current document.
 // Traversal rule: if a locked group is encountered, unlock the group first,
 // then traverse and unlock its children.
+// Hidden layers: if a layer is hidden before unlocking, it is unlocked then
+// deleted immediately to prevent it from reappearing after the lock is removed.
 #target Photoshop
 
 (function () {
@@ -23,19 +25,34 @@
         } catch (e4) {}
     }
 
-    function traverseAndUnlock(container) {
-        for (var i = 0; i < container.layers.length; i++) {
+    function traverseAndProcess(container) {
+        // Iterate backwards so deletion doesn't shift indices of unvisited layers.
+        for (var i = container.layers.length - 1; i >= 0; i--) {
             var layer = container.layers[i];
+            var hidden = !layer.visible;
+
             if (layer.typename === "LayerSet") {
-                // Parent group must be unlocked first.
-                unlockOne(layer);
-                traverseAndUnlock(layer);
+                if (hidden) {
+                    // Hidden group: unlock + delete entirely (skip traversal into children).
+                    unlockOne(layer);
+                    try { layer.remove(); } catch (e) {}
+                } else {
+                    // Visible group: unlock first, then traverse children.
+                    unlockOne(layer);
+                    traverseAndProcess(layer);
+                }
             } else {
-                unlockOne(layer);
+                if (hidden) {
+                    // Hidden regular layer: unlock + delete.
+                    unlockOne(layer);
+                    try { layer.remove(); } catch (e) {}
+                } else {
+                    unlockOne(layer);
+                }
             }
         }
     }
 
     // Top-level traversal from active document.
-    traverseAndUnlock(doc);
+    traverseAndProcess(doc);
 })();

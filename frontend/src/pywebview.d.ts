@@ -63,11 +63,21 @@ export interface PyApi {
   /** 弹原生 dialog 仅可选 .psd（不含 .psb）。 */
   pick_psd_only_file: () => Promise<BackendResult<PickPsdFilePayload>>;
 
+  /** 将本应用窗口置顶（PS 队列全部完成后再调，避免每个文件处理完都抢一次焦点）。 */
+  focus_app: () => Promise<BackendResult<Record<string, never>>>;
+
+  /** 队列开始前：在 Photoshop 中依次打开所有路径对应的 PSD（不跑清洗脚本）。 */
+  open_psd_queue: (paths: string[]) => Promise<BackendResult<{ count: number }>>;
+
   /**
    * 同步阻塞调用：让 PS 按顺序跑多个 jsx 串联清洗，返回 _clean.psd 路径。
    * 大 PSD 可能要 1~2 分钟，前端要做 loading 反馈。
+   * skip_open=true：假定文件已由 open_psd_queue 打开，仅激活该文档后跑脚本。
    */
-  process_psd: (file_path: string) => Promise<BackendResult<ProcessPsdPayload>>;
+  process_psd: (
+    file_path: string,
+    skip_open?: boolean,
+  ) => Promise<BackendResult<ProcessPsdPayload>>;
 
   /**
    * 用 Photoshop 打开指定 PSD 文件（人工检查用）。

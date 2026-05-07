@@ -69,8 +69,6 @@
         // PLACEBEFORE = 在面板里位于 group 的上方（视觉上同位置）
         child.move(group, ElementPlacement.PLACEBEFORE);
 
-        // 删除现在已空的组
-        if (group.allLocked) group.allLocked = false;
         group.remove();
     }
 })();

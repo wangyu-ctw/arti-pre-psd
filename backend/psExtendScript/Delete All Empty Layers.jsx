@@ -318,13 +318,12 @@ function runTask() {
             // FORK: endOfLayerSet 是 PS 内部的组关闭标记，删 startOfLayerSet 时
             //   会自动连带删除，单独 putIdentifier 反而可能失败/产生噪声，跳过。
             if (layer.layerType === 'endOfLayerSet') continue;
-            // FORK: effectiveVisible=false（自己或父组 hidden）→ 强制删，无视 locked。
-            //   locked 的 hidden 图层先记入 unlockBeforeDeleteList，删之前会先解锁。
+            // FORK: effectiveVisible=false（自己或父组 hidden）→ 强制删。
+            //   无论 getIsLocked 是否检测到锁（前置步骤可能已清除 protectAll 但
+            //   仍有其他锁类型），一律加入 unlockBeforeDeleteList 再删，确保解锁。
             if (!layer.effectiveVisible) {
                 deleteLayersList.push(layer.itemID);
-                if (layer.locked) {
-                    unlockBeforeDeleteList.push(layer.itemID);
-                }
+                unlockBeforeDeleteList.push(layer.itemID);
                 continue;
             }
             // 原逻辑：仅删非 locked 且 remove=true 的（空图层 / 空文字层等）
@@ -522,7 +521,11 @@ function getDocumentPropertyDescriptor(property) {
 ///////////////////////////////////////////////////////////////////////////////
 function runUnlockLayers(idList) {
     var idApplyLocking = stringIDToTypeID("applyLocking");
-    var idProtectNone = stringIDToTypeID("protectNone");
+    // 显式把所有锁类型逐一置 false，避免 protectNone=true 在新版 PS 不生效
+    var idProtectAll          = stringIDToTypeID("protectAll");
+    var idProtectComposite    = stringIDToTypeID("protectComposite");
+    var idProtectPosition     = stringIDToTypeID("protectPosition");
+    var idProtectTransparency = stringIDToTypeID("protectTransparency");
     for (var i = 0; i < idList.length; i++) {
         try {
             var desc = new ActionDescriptor();
@@ -530,7 +533,10 @@ function runUnlockLayers(idList) {
             ref.putIdentifier(TID.layer, idList[i]);
             desc.putReference(TID.idNull, ref);
             var lockingDesc = new ActionDescriptor();
-            lockingDesc.putBoolean(idProtectNone, true);
+            lockingDesc.putBoolean(idProtectAll,          false);
+            lockingDesc.putBoolean(idProtectComposite,    false);
+            lockingDesc.putBoolean(idProtectPosition,     false);
+            lockingDesc.putBoolean(idProtectTransparency, false);
             desc.putObject(TID.to, TID.layerLocking, lockingDesc);
             executeAction(idApplyLocking, desc, DialogModes.NO);
         } catch (e) {

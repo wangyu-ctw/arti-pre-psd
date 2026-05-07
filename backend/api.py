@@ -236,11 +236,37 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    def process_psd(self, file_path: str) -> dict[str, Any]:
+    def focus_app(self) -> dict[str, Any]:
+        """将本应用窗口置顶（不操作 PS）。用于 PSD 队列全部处理完后再抢焦点。"""
+        try:
+            photoshop.activate_app_window()
+            return {"ok": True, "data": {}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def open_psd_queue(self, paths: list[Any]) -> dict[str, Any]:
+        """队列处理前：在 Photoshop 中依次打开 paths 里的所有 PSD（不跑清洗脚本）。"""
+        try:
+            if not isinstance(paths, list) or not paths:
+                return {"ok": False, "error": "paths 必须为非空数组"}
+            norm = [str(p) for p in paths if isinstance(p, str) and p.strip()]
+            if not norm:
+                return {"ok": False, "error": "paths 中无有效路径字符串"}
+            ps_path = photoshop.detect_ps_path()
+            if not ps_path:
+                return {"ok": False, "error": "尚未配置 PS，请先调 ps_pick_app"}
+            return photoshop.open_psd_files_for_queue(norm, ps_path)
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def process_psd(self, file_path: str, skip_open: bool = False) -> dict[str, Any]:
         """主入口：用 PS 按顺序跑多个 ExtendScript 脚本，返回 _clean.psd 路径。
 
         本调用是同步阻塞的——大 PSD 可能要 1~2 分钟，前端要做 loading 反馈。
         失败时尽量返回可读的 error 字符串。
+
+        skip_open=True：假定该文件已由 open_psd_queue 打开，本调用不再执行 open，
+        仅在已打开文档中按绝对路径激活后跑脚本（供批量队列串行处理）。
         """
         try:
             if not isinstance(file_path, str) or not file_path:
@@ -248,7 +274,7 @@ class Api:
             ps_path = photoshop.detect_ps_path()
             if not ps_path:
                 return {"ok": False, "error": "尚未配置 PS，请先调 ps_pick_app"}
-            return photoshop.process_psd(file_path, ps_path)
+            return photoshop.process_psd(file_path, ps_path, skip_open=bool(skip_open))
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 

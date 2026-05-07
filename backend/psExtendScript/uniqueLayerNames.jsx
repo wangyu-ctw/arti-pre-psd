@@ -19,9 +19,6 @@
     /** @param {Layer} lyr @param {string} newNm */
     function renameSafe(lyr, newNm) {
         try {
-            if (lyr.allLocked) {
-                lyr.allLocked = false;
-            }
             lyr.name = newNm;
             return true;
         } catch (e) {

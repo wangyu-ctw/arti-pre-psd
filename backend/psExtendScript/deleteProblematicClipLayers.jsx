@@ -29,7 +29,6 @@
         var layer = toDelete[i];
         var name = layer.name;
         try {
-            if (layer.allLocked) layer.allLocked = false;
             layer.remove();
             deleted++;
         } catch (e) {

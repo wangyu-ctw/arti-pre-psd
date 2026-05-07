@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import platform
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -42,6 +43,21 @@ PS_BUNDLE_ID = "com.adobe.Photoshop"
 
 # PS 处理大文件偶尔很慢；超时给宽松一点（10min）
 _PROCESS_TIMEOUT_SEC = 600
+
+# 处理步骤列表：(显示名称, jsx脚本路径)
+_PROCESS_STEPS: list[tuple[str, Path]] = [
+    ("1. Ungroup Artboards",               SCRIPT_UNGROUP_ARTBOARDS),
+    ("2. Delete All Empty Layers",         SCRIPT_DELETE_EMPTY),
+    ("3. Unlock All Locked Layers/Groups", SCRIPT_UNLOCK_ALL_LAYERS),
+    ("4. Flatten All Layer Effects",       SCRIPT_FLATTEN_FX),
+    ("5. Flatten Groups With Effects",     SCRIPT_FLATTEN_GROUPS_WITH_FX),
+    ("6. Flatten All Masks",               SCRIPT_FLATTEN_MASKS),
+    ("7. Flatten Clipping Masks",          SCRIPT_FLATTEN_CLIPPING_MASKS),
+    ("8. Trim Layers To Canvas",           SCRIPT_TRIM_TO_CANVAS),
+    ("2b. Delete All Empty Layers (再跑)", SCRIPT_DELETE_EMPTY),
+    ("9. Organize Layer Groups",           SCRIPT_ORGANIZE_GROUPS),
+    ("10. Unique Layer Names",              SCRIPT_UNIQUE_LAYER_NAMES),
+]
 
 
 # ---- 检测 -----------------------------------------------------------
@@ -131,152 +147,162 @@ def _quote_for_applescript(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _build_process_applescript(input_file_name: str) -> str:
-    """生成处理流程的 AppleScript（PSD 已经被 `open -a` 推给 PS 了，这里只做后续）：
+def _js_activate_document_by_posix_path(posix_path: str) -> str:
+    """ExtendScript 源码：在已打开的文档里按磁盘绝对路径激活目标文档（单行）。"""
+    p = posix_path.replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        "(function(){"
+        'var p="' + p + '";'
+        "var f=new File(p);"
+        "for(var i=0;i<app.documents.length;i++){"
+        "var d=app.documents[i];"
+        "try{"
+        "if(d.fullName&&d.fullName.fsName===f.fsName){"
+        "app.activeDocument=d;return\"ok\";"
+        "}"
+        "}catch(e0){}"
+        "}"
+        'throw new Error("no matching open document: "+p);'
+        "})();"
+    )
 
-       等 PS 把目标文件加载到 front document → 按顺序跑多个 .jsx → 关闭原文档
-       （不保存）→ return _clean.psd 路径。
 
-       saveAsClean.jsx 末尾 IIFE return outFile.fsName，所以最后一步
-       `do javascript` 的返回值就是清洗后文件的绝对路径。
-
-    为什么这里**不**让 AppleScript 自己 `open` 文件：
-      - osascript 进程里 `POSIX file "..." as alias` 解析出的 alias 包含
-        进程自身 context 的引用 token；通过 Apple Event 跨进程交给 PS 时，
-        PS 用自己的 TCC / 权限上下文去重新解析这个 token，会失败报
-        `-43 fnfErr`（即"找不到文件 某个对象"）。
-      - 等价地用户在 Finder 双击 PSD 时是走 LaunchServices 的 odoc 事件，
-        那条路径是 macOS 文件系统级标准入口，跨进程权限边界一律 work。
-      - 所以让 Python subprocess 直接 `open -g -a PS_PATH FILE`，把活儿交给
-        LaunchServices；AppleScript 这里只负责"等待已加载 + 跑脚本"。
-
-    为什么 jsx 也**不**直接传 alias / file 给 `do javascript`：
-      - 实测同样的跨进程问题：PS 拿到 alias 后会把它 coerce 成 text，结果是
-        "alias Macintosh HD:..."字面量，被当成 javascript 源码 evaluate，
-        立刻报 PS 错误码 8800（generalPhotoshopError）"<没有其它信息可用>"。
-      - 改成在 osascript 进程内用 `read ... as «class utf8»` 把 .jsx 内容
-        读成 UTF-8 字符串，再以"javascript text"形式传给 PS——纯字符串
-        跨 Apple Event 100% 安全。
-
-    每个清洗步骤都包 try / on error 让单步出错不中断整体流程；错误信息
-    收集到 errorLog 一并回传。最后一步 saveAsClean 是关键路径——它必须
-    成功，否则我们拿不到输出文件路径，整个流程算失败（不包 try）。
-
-    返回值约定（osascript stdout）：
-      - 全部成功：单行的输出文件绝对路径。
-      - 有 step 出错：第 1 行 = 输出路径，之后 "===ERRORS===" 标记，
-        后续行 = 每行一个失败步骤的 [step] errMsg。Python 端按这个结构
-        拆分两段。
-    """
+def _as_wait_for_doc(input_file_name: str, *, posix_path: Optional[str] = None) -> str:
+    """AppleScript：等待 PS 加载目标文档，并把 dialog mode 设为 NO。"""
     q = _quote_for_applescript
-    # 每个步骤打包成 (label, jsxVarName)。AppleScript 里逐个 try/on error。
-    steps = [
-        ("0. Unlock All Locked Layers/Groups", "jsxUnlockAllText"),
-        ("1. Ungroup Artboards", "jsxUngroupArtboardsText"),
-        ("2. Delete All Empty Layers", "jsxDeleteText"),
-        ("3. Flatten All Layer Effects", "jsxFxText"),
-        ("4. Flatten Groups With Effects", "jsxFlattenGroupsText"),
-        ("5. Flatten All Masks", "jsxMasksText"),
-        ("6. Flatten Clipping Masks", "jsxClippingText"),
-        ("6b. Delete Non-Normal / Adjustment Clip Layers", "jsxDelProblematicClipText"),
-        ("6c. Flatten Clipping Masks (再跑)", "jsxClippingText"),
-        ("7. Trim Layers To Canvas", "jsxTrimText"),
-        ("2b. Delete All Empty Layers (再跑)", "jsxDeleteText"),
-        ("8. Organize Layer Groups", "jsxOrganizeGroupsText"),
-        ("9. Unique Layer Names", "jsxUniqueNamesText"),
-    ]
-    step_blocks = []
-    for label, var in steps:
-        step_blocks.append(
-            '    try\n'
-            f'        do javascript {var}\n'
-            '    on error errMsg\n'
-            f'        set errorLog to errorLog & "[{q(label)}] " & errMsg & linefeed\n'
-            '    end try\n'
+    if posix_path:
+        jsx_activate = q(_js_activate_document_by_posix_path(posix_path))
+        return (
+            f'set jsxActivate to "{jsx_activate}"\n'
+            f'tell application id "{PS_BUNDLE_ID}"\n'
+            '    set ready to false\n'
+            '    repeat 120 times\n'
+            '        try\n'
+            '            if (count of documents) > 0 then\n'
+            '                do javascript jsxActivate\n'
+            '                set ready to true\n'
+            '                exit repeat\n'
+            '            end if\n'
+            '        end try\n'
+            '        delay 0.5\n'
+            '    end repeat\n'
+            '    if ready is false then error "等待 Photoshop 中匹配路径的文档就绪超时（60s）"\n'
+            '    do javascript "app.displayDialogs = DialogModes.NO;"\n'
+            'end tell\n'
+        )
+    else:
+        return (
+            f'set targetName to "{q(input_file_name)}"\n'
+            f'tell application id "{PS_BUNDLE_ID}"\n'
+            '    set ready to false\n'
+            '    repeat 60 times\n'
+            '        try\n'
+            '            if (count of documents) > 0 then\n'
+            '                if name of front document is targetName then\n'
+            '                    set ready to true\n'
+            '                    exit repeat\n'
+            '                end if\n'
+            '            end if\n'
+            '        end try\n'
+            '        delay 0.5\n'
+            '    end repeat\n'
+            '    if ready is false then error "等待 Photoshop 加载文件超时（30s）"\n'
+            '    do javascript "app.displayDialogs = DialogModes.NO;"\n'
+            'end tell\n'
         )
 
+
+def _as_run_jsx(jsx_path: Path) -> str:
+    """AppleScript：在 PS 当前 active document 上执行单个 JSX 文件。"""
+    q = _quote_for_applescript
     return (
-        # 先在 osascript 进程内把各 jsx 读成 UTF-8 字符串（read 是 StandardAdditions）
-        f'set jsxUnlockAllFile to POSIX file "{q(str(SCRIPT_UNLOCK_ALL_LAYERS))}" as alias\n'
-        f'set jsxUngroupArtboardsFile to POSIX file "{q(str(SCRIPT_UNGROUP_ARTBOARDS))}" as alias\n'
-        f'set jsxDeleteFile to POSIX file "{q(str(SCRIPT_DELETE_EMPTY))}" as alias\n'
-        f'set jsxFxFile to POSIX file "{q(str(SCRIPT_FLATTEN_FX))}" as alias\n'
-        f'set jsxFlattenGroupsFile to POSIX file "{q(str(SCRIPT_FLATTEN_GROUPS_WITH_FX))}" as alias\n'
-        f'set jsxMasksFile to POSIX file "{q(str(SCRIPT_FLATTEN_MASKS))}" as alias\n'
-        f'set jsxClippingFile to POSIX file "{q(str(SCRIPT_FLATTEN_CLIPPING_MASKS))}" as alias\n'
-        f'set jsxDelProblematicClipFile to POSIX file "{q(str(SCRIPT_DELETE_PROBLEMATIC_CLIP))}" as alias\n'
-        f'set jsxOrganizeGroupsFile to POSIX file "{q(str(SCRIPT_ORGANIZE_GROUPS))}" as alias\n'
-        f'set jsxUniqueNamesFile to POSIX file "{q(str(SCRIPT_UNIQUE_LAYER_NAMES))}" as alias\n'
-        f'set jsxTrimFile to POSIX file "{q(str(SCRIPT_TRIM_TO_CANVAS))}" as alias\n'
-        f'set jsxSaveFile to POSIX file "{q(str(SCRIPT_SAVE_AS_CLEAN))}" as alias\n'
-        'set jsxUnlockAllText to read jsxUnlockAllFile as «class utf8»\n'
-        'set jsxUngroupArtboardsText to read jsxUngroupArtboardsFile as «class utf8»\n'
-        'set jsxDeleteText to read jsxDeleteFile as «class utf8»\n'
-        'set jsxFxText to read jsxFxFile as «class utf8»\n'
-        'set jsxFlattenGroupsText to read jsxFlattenGroupsFile as «class utf8»\n'
-        'set jsxMasksText to read jsxMasksFile as «class utf8»\n'
-        'set jsxClippingText to read jsxClippingFile as «class utf8»\n'
-        'set jsxDelProblematicClipText to read jsxDelProblematicClipFile as «class utf8»\n'
-        'set jsxOrganizeGroupsText to read jsxOrganizeGroupsFile as «class utf8»\n'
-        'set jsxUniqueNamesText to read jsxUniqueNamesFile as «class utf8»\n'
-        'set jsxTrimText to read jsxTrimFile as «class utf8»\n'
-        'set jsxSaveText to read jsxSaveFile as «class utf8»\n'
-        f'set targetName to "{q(input_file_name)}"\n'
-        'set errorLog to ""\n'
+        f'set jsxFile to POSIX file "{q(str(jsx_path))}" as alias\n'
+        'set jsxText to read jsxFile as «class utf8»\n'
         f'tell application id "{PS_BUNDLE_ID}"\n'
-        # 不 activate：避免批量处理时反复把 PS 拉到最前抢焦点；tell + do javascript 仍可对已响应的 PS 执行。
-        # 文件由前一步 `open -a PS FILE` 打开（该步可能短暂切到 PS，属预期）。
-        # 等 PS 把目标文件加载到 front document（PS 启动 + 大 PSD 加载耗时）
-        # 60 次 × 0.5s = 30s 兜底；正常 1~10s 内会就绪
-        '    set ready to false\n'
-        '    repeat 60 times\n'
-        '        try\n'
-        '            if (count of documents) > 0 then\n'
-        '                if name of front document is targetName then\n'
-        '                    set ready to true\n'
-        '                    exit repeat\n'
-        '                end if\n'
-        '            end if\n'
-        '        end try\n'
-        '        delay 0.5\n'
-        '    end repeat\n'
-        '    if ready is false then error "等待 Photoshop 加载文件超时（30s）"\n'
-        # 把 PS 的 dialog mode 设为 NO：所有"命令当前不可用" / "另存为覆盖确认"
-        # / "关闭未保存文档警告"等 modal 弹窗都会被抑制，转而抛 JS 异常或直接
-        # 走 saneДefault 行为。否则 PS 弹窗时整个 osascript 会被卡住等点确定。
-        # 必须**整段流程**（含 saveAsClean 和 close）都在 NO 模式下，否则 saveAs
-        # / close 会触发新弹窗。流程末尾才恢复 ALL。
-        '    try\n'
-        '        do javascript "app.displayDialogs = DialogModes.NO;"\n'
-        '    end try\n'
-        + ''.join(step_blocks) +
-        # saveAsClean 是关键路径：它必须成功，否则拿不到输出文件路径
-        '    set savedPath to (do javascript jsxSaveText)\n'
-        '    close current document saving no\n'
-        # 流程末尾恢复 dialog mode 为 ALL（PS 默认值），避免污染用户后续手动操作
-        '    try\n'
-        '        do javascript "app.displayDialogs = DialogModes.ALL;"\n'
-        '    end try\n'
-        # 用 "===ERRORS===" 分隔输出路径和错误日志，便于 Python 拆分
-        '    if errorLog is "" then\n'
-        '        return savedPath\n'
-        '    else\n'
-        '        return savedPath & linefeed & "===ERRORS===" & linefeed & errorLog\n'
-        '    end if\n'
+        '    do javascript jsxText\n'
         'end tell\n'
     )
 
 
-def process_psd(input_path: str, ps_path: str) -> dict[str, Any]:
-    """主流程（仅 macOS）：
+def _as_save_and_close() -> str:
+    """AppleScript：运行 saveAsClean.jsx，关闭文档，恢复 dialog mode，返回输出路径。"""
+    q = _quote_for_applescript
+    return (
+        f'set jsxSaveFile to POSIX file "{q(str(SCRIPT_SAVE_AS_CLEAN))}" as alias\n'
+        'set jsxSaveText to read jsxSaveFile as «class utf8»\n'
+        f'tell application id "{PS_BUNDLE_ID}"\n'
+        '    set savedPath to (do javascript jsxSaveText)\n'
+        '    close current document saving no\n'
+        '    try\n'
+        '        do javascript "app.displayDialogs = DialogModes.ALL;"\n'
+        '    end try\n'
+        '    return savedPath\n'
+        'end tell\n'
+    )
 
-      1. 用 `open -g -a PS_PATH FILE` 后台把 PSD 交给 PS（尽量不抢当前前台焦点）
-         （比 AppleScript 自己 open alias 稳得多——绕开跨进程 alias 失效的坑）
-      2. 跑 osascript：等 PS 加载 → 按顺序跑多个 jsx → 关原文件 → return 输出路径
+
+def _run_osascript(script: str, timeout: int = 120) -> tuple[bool, str]:
+    """执行一段 AppleScript，返回 (ok, output_or_error)。"""
+    try:
+        r = subprocess.run(
+            ["osascript", "-e", script],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if r.returncode != 0:
+            return False, (r.stderr or r.stdout).strip() or f"osascript exit={r.returncode}"
+        return True, r.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return False, f"osascript 超时（>{timeout}s）"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def open_psd_files_for_queue(paths: list[str], ps_path: str) -> dict[str, Any]:
+    """队列开始前：用 LaunchServices 依次在 Photoshop 中打开多个 PSD（不阻塞 PS 加载）。
+
+    与 `process_psd(..., skip_open=True)` 配合：处理某一文件时再用 ExtendScript
+    按绝对路径激活对应文档，避免多文档时 front document 不是目标文件。
     """
     if not IS_MAC:
         return {"ok": False, "error": "目前仅 macOS 实现了 PSD 处理"}
-    src = Path(input_path).expanduser()
+    if not paths:
+        return {"ok": False, "error": "empty paths"}
+    if not Path(ps_path).exists():
+        return {"ok": False, "error": f"Photoshop 应用不存在：{ps_path}"}
+
+    for raw in paths:
+        src = Path(str(raw)).expanduser().resolve()
+        if not src.is_file():
+            return {"ok": False, "error": f"文件不存在：{src}"}
+        if src.suffix.lower() != ".psd":
+            return {"ok": False, "error": f"非 .psd 文件：{src}"}
+        try:
+            open_res = subprocess.run(
+                ["open", "-g", "-a", ps_path, str(src)],
+                capture_output=True, text=True, timeout=15,
+            )
+            if open_res.returncode != 0:
+                err = (open_res.stderr or open_res.stdout).strip() or "open 命令非零退出"
+                return {"ok": False, "error": f"无法在 Photoshop 中打开：{src.name}（{err}）"}
+        except Exception as e:
+            return {"ok": False, "error": f"打开 {src.name} 失败：{type(e).__name__}: {e}"}
+        time.sleep(0.12)
+
+    return {"ok": True, "data": {"count": len(paths)}}
+
+
+def process_psd(input_path: str, ps_path: str, *, skip_open: bool = False) -> dict[str, Any]:
+    """主流程（仅 macOS）：
+
+      1. 默认：用 `open -g -a PS_PATH FILE` 把 PSD 交给 PS。
+         skip_open=True：假定文件已由 `open_psd_files_for_queue` 打开，本步不再 open。
+      2. 等待 PS 加载目标文档（独立 osascript 调用）。
+      3. 逐步执行各 jsx 脚本，每步前后打印日志（独立 osascript 调用，实时日志）。
+      4. 运行 saveAsClean + 关闭文档，返回输出路径。
+    """
+    if not IS_MAC:
+        return {"ok": False, "error": "目前仅 macOS 实现了 PSD 处理"}
+    src = Path(input_path).expanduser().resolve()
     if not src.is_file():
         return {"ok": False, "error": f"文件不存在：{src}"}
     if src.suffix.lower() != ".psd":
@@ -285,65 +311,74 @@ def process_psd(input_path: str, ps_path: str) -> dict[str, Any]:
         return {"ok": False, "error": f"Photoshop 应用不存在：{ps_path}"}
 
     # 检查所有脚本文件都存在
-    for script in (SCRIPT_UNLOCK_ALL_LAYERS, SCRIPT_UNGROUP_ARTBOARDS, SCRIPT_DELETE_EMPTY, SCRIPT_FLATTEN_FX,
-                   SCRIPT_FLATTEN_GROUPS_WITH_FX, SCRIPT_FLATTEN_MASKS,
-                   SCRIPT_FLATTEN_CLIPPING_MASKS,
-                   SCRIPT_DELETE_PROBLEMATIC_CLIP, SCRIPT_ORGANIZE_GROUPS,
-                   SCRIPT_UNIQUE_LAYER_NAMES, SCRIPT_TRIM_TO_CANVAS,
-                   SCRIPT_SAVE_AS_CLEAN):
+    all_scripts = [p for _, p in _PROCESS_STEPS] + [SCRIPT_SAVE_AS_CLEAN]
+    for script in dict.fromkeys(all_scripts):  # 去重保序
         if not script.is_file():
             return {"ok": False, "error": f"脚本缺失：{script.name}"}
 
-    # 1. LaunchServices 路径：让 PS 自己用 odoc 事件打开（用户在 Finder 双击的等价路径）
-    try:
-        open_res = subprocess.run(
-            ["open", "-g", "-a", ps_path, str(src)],
-            capture_output=True, text=True, timeout=15,
-        )
-        if open_res.returncode != 0:
-            err = (open_res.stderr or open_res.stdout).strip() or "open 命令非零退出"
-            return {"ok": False, "error": f"无法把 PSD 交给 Photoshop：{err}"}
-    except Exception as e:
-        return {"ok": False, "error": f"启动 open 命令失败：{type(e).__name__}: {e}"}
+    # 1. LaunchServices 打开（队列模式由 open_psd_files_for_queue 预先批量打开）
+    if not skip_open:
+        try:
+            open_res = subprocess.run(
+                ["open", "-g", "-a", ps_path, str(src)],
+                capture_output=True, text=True, timeout=15,
+            )
+            if open_res.returncode != 0:
+                err = (open_res.stderr or open_res.stdout).strip() or "open 命令非零退出"
+                return {"ok": False, "error": f"无法把 PSD 交给 Photoshop：{err}"}
+        except Exception as e:
+            return {"ok": False, "error": f"启动 open 命令失败：{type(e).__name__}: {e}"}
 
-    # 2. AppleScript 等加载 + 跑多个 jsx + 关文档 + return 输出路径
-    script_src = _build_process_applescript(src.name)
-    try:
-        r = subprocess.run(
-            ["osascript", "-e", script_src],
-            capture_output=True, text=True, timeout=_PROCESS_TIMEOUT_SEC,
-        )
-        if r.returncode != 0:
-            err = (r.stderr or r.stdout).strip() or f"osascript exit={r.returncode}"
-            return {"ok": False, "error": err}
-        raw = r.stdout.strip()
-        if not raw:
-            return {"ok": False, "error": "saveAsClean 没有返回路径（可能 PS 内部出错）"}
+    # 2. 等待 PS 加载目标文档 + 设 dialog mode NO
+    print(f"[PS] 等待文档就绪: {src.name}", flush=True)
+    ok, err = _run_osascript(
+        _as_wait_for_doc(src.name, posix_path=str(src) if skip_open else None),
+        timeout=90,
+    )
+    if not ok:
+        return {"ok": False, "error": f"等待文档失败：{err}"}
 
-        # AppleScript 约定：第 1 行 = path；如果有 step 出错，下方有 "===ERRORS===" 标记 + 错误日志
-        out_path, sep, error_log = raw.partition("===ERRORS===")
-        out_path = out_path.strip()
-        error_log = error_log.strip() if sep else ""
+    # 3. 逐步执行各 jsx（每步独立 osascript 调用，实时打印日志）
+    step_errors: list[str] = []
+    for label, jsx_path in _PROCESS_STEPS:
+        print(f"[PS step] {label}", flush=True)
+        ok, result = _run_osascript(_as_run_jsx(jsx_path), timeout=300)
+        if not ok:
+            msg = f"[{label}] {result}"
+            print(f"[PS step ERROR] {msg}", flush=True)
+            step_errors.append(msg)
 
-        if not Path(out_path).exists():
-            err_suffix = f"\n步骤错误日志：\n{error_log}" if error_log else ""
-            return {"ok": False, "error": f"输出文件不存在：{out_path}{err_suffix}"}
+    # 4. 保存 + 关闭文档
+    print("[PS] 保存输出文件...", flush=True)
+    ok, out_path = _run_osascript(_as_save_and_close(), timeout=120)
+    if not ok:
+        error_log = "\n".join(step_errors)
+        suffix = f"\n步骤错误日志：\n{error_log}" if error_log else ""
+        return {"ok": False, "error": f"saveAsClean 失败：{out_path}{suffix}"}
 
-        # 新文件作成后立刻把本 APP 置顶，让用户在我们的界面看到处理结果。
-        # PS 关闭文件/处理完后仍可能保持 frontmost，需主动抢回焦点。
+    if not out_path or not Path(out_path).exists():
+        error_log = "\n".join(step_errors)
+        suffix = f"\n步骤错误日志：\n{error_log}" if error_log else ""
+        return {"ok": False, "error": f"输出文件不存在：{out_path}{suffix}"}
+
+    print(f"[PS] 完成: {out_path}", flush=True)
+
+    # 单次 open+处理：结束时把本 APP 置顶。队列模式（skip_open=True）不在此抢焦点，
+    # 由前端在整批 process_psd 全部结束后再调 activate_app_window / focus_app。
+    if not skip_open:
         _activate_self()
 
-        return {"ok": True, "data": {
-            "path": out_path,
-            "directory": str(Path(out_path).parent),
-            "size_bytes": Path(out_path).stat().st_size,
-            # 部分步骤跳过的错误日志；为空字符串表示全部成功
-            "step_errors": error_log,
-        }}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"PS 处理超时（>{_PROCESS_TIMEOUT_SEC}s）"}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return {"ok": True, "data": {
+        "path": out_path,
+        "directory": str(Path(out_path).parent),
+        "size_bytes": Path(out_path).stat().st_size,
+        "step_errors": "\n".join(step_errors),
+    }}
+
+
+def activate_app_window() -> None:
+    """把本应用窗口置顶（供队列整批完成后由 API 显式调用，或与单次 process_psd 内逻辑一致）。"""
+    _activate_self()
 
 
 def _activate_self() -> None:

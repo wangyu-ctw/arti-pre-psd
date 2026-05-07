@@ -433,7 +433,7 @@ function addSelectedLayer( layerIndexOrName ) {
 		executeAction( id243, desc46, DialogModes.NO );
 	}
 	catch(e) {
-		alert(e + ":" + e.line); // do nothing
+		// alert(e + ":" + e.line); // do nothing
 	}
 }
 
@@ -499,7 +499,9 @@ function setCurrentState(stateArray) {
 				stateArray[i].layer.visible = stateArray[i].visible;
 			}
 		}
-		catch(e) { alert(e + ":" + e.line); }
+		catch(e) { 
+			//alert(e + ":" + e.line); do nothing
+		}
 	}
 }
 

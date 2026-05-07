@@ -84,12 +84,20 @@
         }
         try {
             doc.activeLayer = ab;
+            // Unlock before ungrouping to avoid permission errors.
+            try { ab.allLocked = false; } catch (eLock) {}
             ungroupTarget();
             ungrouped++;
         } catch (e) {
             failedIds[ab.id] = true;
         }
     }
+
+    // Deselect all layers after ungrouping.
+    try {
+        var deselDesc = new ActionDescriptor();
+        executeAction(stringIDToTypeID("selectNoLayers"), deselDesc, DialogModes.NO);
+    } catch (eDesel) { /* no-op */ }
 
     return "ungrouped=" + ungrouped + ", iter=" + iter;
 })();

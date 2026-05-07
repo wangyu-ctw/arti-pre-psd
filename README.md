@@ -20,21 +20,20 @@
       ▼ AppleScript "tell application ... do javascript file"
 [Photoshop]
       │
-      ▼ 顺序执行多个 ExtendScript（每步包 try/on error 失败可跳过）
+      ▼ 顺序执行多个 ExtendScript（每步独立 osascript 调用，失败记录后继续）
 backend/psExtendScript/
-  0. ungroupArtboards.jsx            # 取消所有画板编组（先于删空层）
-  1. Delete All Empty Layers.jsx   # 删空图层 + 删所有"有效不可见"图层（fork 增强）
-  2. Flatten All Layer Effects.jsx # 栅格化所有 ArtLayer 的图层样式（PS 自带）
-  3. flattenGroupsWithEffects.jsx  # 自身带 effects 的 LayerSet → 合并成单层（拼合可见+遵循剪切）
-  4. Flatten All Masks.jsx         # 烧入图层蒙版到 alpha（PS 自带）
-  5. flattenClippingMasks.jsx      # 合并剪切蒙版组 + 栅格化 base 残留 effects 等
-  5b. deleteProblematicClipLayers.jsx
-  5c. flattenClippingMasks.jsx（再跑）
-  6. trimLayersToCanvas.jsx        # 裁掉画布外像素等
-  1b. Delete All Empty Layers.jsx  # 再跑删空
-  8. organizeLayerGroups.jsx       # 解散单子组
-  9. uniqueLayerNames.jsx          # 全文档图层/组名去重（_2、_3…）
-  → saveAsClean.jsx                # 另存为 [原名]_clean.psd
+  1.  ungroupArtboards.jsx            # 取消所有画板编组，解锁后再取消，完成后清空选中
+  2.  Delete All Empty Layers.jsx     # 删空图层 + 删所有"有效不可见"图层（fork 增强）
+  3.  unlockAllLayersAndGroups.jsx    # 解锁全部图层/组；解锁前已隐藏的图层直接删除
+  4.  Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式（PS 自带）
+  5.  flattenGroupsWithEffects.jsx    # 自身带 effects 的 LayerSet → 合并成单层
+  6.  Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（PS 自带）
+  7.  flattenClippingMasks.jsx        # Stamp Visible 策略：合并所有剪切蒙版组
+  8.  trimLayersToCanvas.jsx          # 裁掉画布外像素
+  2b. Delete All Empty Layers.jsx     # 再跑删空（清洗链产生的空壳）
+  9.  organizeLayerGroups.jsx         # 解散单子组
+  10. uniqueLayerNames.jsx            # 全文档图层/组名去重（_2、_3…）
+  → saveAsClean.jsx                   # 另存为 [原名]_clean.psd
       │
       ▼ saveAsClean 末尾 IIFE return 路径
 [osascript stdout]
@@ -63,16 +62,17 @@ arti-pre-psd/
 │   ├── settings.py               # ~/.arti-pre-psd/settings.json 读写
 │   ├── psExtendScript/           # 跑在 Photoshop 里的 .jsx 脚本
 │   │   ├── README.md
-│   │   ├── ungroupArtboards.jsx              # 取消全部画板编组（清洗链第 0 步）
-│   │   ├── Delete All Empty Layers.jsx     # 已 fork 增强：兼删隐藏图层
-│   │   ├── Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式
-│   │   ├── flattenGroupsWithEffects.jsx    # 合并自身带 effects 的图层组
-│   │   ├── Flatten All Masks.jsx           # 烧入图层蒙版到 alpha
-│   │   ├── flattenClippingMasks.jsx        # 合并剪切蒙版组 + 栅格化 base 残留 effects
-│   │   ├── deleteProblematicClipLayers.jsx # 删问题剪切/调整层等（见脚本注释）
-│   │   ├── organizeLayerGroups.jsx         # 解散单子组
-│   │   ├── uniqueLayerNames.jsx            # 全文档图层与组名去重
-│   │   ├── trimLayersToCanvas.jsx          # 裁掉图层超出画布部分（Image > Crop）
+│   │   ├── ungroupArtboards.jsx              # 取消全部画板编组（步骤 1）
+│   │   ├── Delete All Empty Layers.jsx     # 删空图层/隐藏图层（步骤 2 & 2b）
+│   │   ├── unlockAllLayersAndGroups.jsx    # 解锁全部图层/组（步骤 3）
+│   │   ├── Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式（步骤 4）
+│   │   ├── flattenGroupsWithEffects.jsx    # 合并自身带 effects 的图层组（步骤 5）
+│   │   ├── Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（步骤 6）
+│   │   ├── flattenClippingMasks.jsx        # Stamp Visible 合并剪切蒙版组（步骤 7）
+│   │   ├── deleteProblematicClipLayers.jsx # 删问题剪切/调整层（备用，当前不在主链中）
+│   │   ├── trimLayersToCanvas.jsx          # 裁掉图层超出画布部分（步骤 8）
+│   │   ├── organizeLayerGroups.jsx         # 解散单子组（步骤 9）
+│   │   ├── uniqueLayerNames.jsx            # 全文档图层与组名去重（步骤 10）
 │   │   └── saveAsClean.jsx                 # 另存为 [原名]_clean.psd
 │   ├── requirements.txt          # 仅保留 pywebview / watchdog / psd-tools（备用）
 │   └── __init__.py
@@ -152,7 +152,7 @@ python3 run.py --dev --watch  # 推荐组合
 
 ExtendScript 详细说明见 `backend/psExtendScript/README.md`。
 
-如果要修改清洗顺序或换脚本，编辑 `backend/photoshop.py` 顶部的 `SCRIPT_*` 常量与 `_build_process_applescript()` 里的调用顺序即可。
+如果要修改清洗顺序或换脚本，编辑 `backend/photoshop.py` 顶部的 `SCRIPT_*` 常量与 `_PROCESS_STEPS` 列表里的调用顺序即可。
 
 ---
 

@@ -20,3 +20,8 @@ body {
   background-color: #f5f7fa;
   color: #1f2937;
 }
+
+.ant-table {
+  border-start-end-radius: 0!important;
+  border-radius: 0!important;
+}
