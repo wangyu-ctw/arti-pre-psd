@@ -1,0 +1,131 @@
+/* PsdUploader ─────────────────────────────────────────── */
+
+.psu-full-height-box {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 24px;
+}
+
+.psu-spin-placeholder {
+  width: 200px;
+  height: 60px;
+}
+
+.psu-drop-area {
+  height: 100%;
+  border: 2px dashed #d9d9d9;
+  border-radius: 8px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.psu-drop-area:hover {
+  border-color: #4f8cff;
+  background: #f0f7ff;
+}
+
+.psu-drop-inner {
+  text-align: center;
+}
+
+.psu-drop-icon {
+  font-size: 56px;
+  color: #4f8cff;
+}
+
+.psu-drop-title {
+  margin-top: 16px;
+  font-size: 16px;
+}
+
+.psu-drop-sub {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.psu-drop-warning {
+  color: red;
+}
+
+.psu-queue-wrap {
+  height: 100%;
+  min-height: 0;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.psu-queue-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  width: 60%;
+  margin: 0 auto;
+}
+
+/* 与全局 .ant-table 规则一致：直角表格 */
+.psu-queue-table.ant-table-wrapper .ant-table {
+  border-start-end-radius: 0 !important;
+  border-radius: 0 !important;
+}
+
+.psu-popover-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: #92400e;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.psu-popover-alert {
+  width: 420px;
+  text-align: left;
+}
+
+.psu-popover-error-text {
+  color: #b91c1c;
+  white-space: pre-wrap;
+  max-width: 420px;
+  margin: 0;
+}
+
+/* 状态图标颜色 */
+.psu-icon-primary {
+  color: #1677ff;
+}
+
+.psu-icon-success {
+  color: #52c41a;
+}
+
+.psu-icon-warning {
+  color: #faad14;
+}
+
+.psu-icon-danger {
+  color: #ff4d4f;
+}
+
+.psu-icon-pointer {
+  cursor: pointer;
+}
+
+.psu-result-warning-icon {
+  color: #faad14;
+}

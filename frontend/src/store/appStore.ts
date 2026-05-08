@@ -3,7 +3,7 @@
  */
 import { Modal } from "antd";
 import { create } from "zustand";
-import type { PickPsdFilePayload, ProcessPsdPayload, PsStatusPayload } from "./pywebview";
+import type { PickPsdFilePayload, ProcessPsdPayload, PsStatusPayload } from "../pywebview";
 
 // ─── 公共类型（从 PsdUploader 提升到全局）──────────────────────────────────
 

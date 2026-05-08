@@ -105,6 +105,20 @@ def relaunch_in_venv(py: Path, argv: list[str]) -> "subprocess.NoReturn":  # typ
     os.execve(str(py), [str(py), str(Path(__file__).resolve()), *argv], env)
 
 
+_ENABLE_TEXT_SELECT_JS = (
+    "(function(){"
+    "var s=document.createElement('style');"
+    "s.textContent='html,body,*{-webkit-user-select:text!important;user-select:text!important}';"
+    "document.head.appendChild(s);"
+    "})()"
+)
+
+
+def _attach_text_select(win: "webview.Window") -> None:  # type: ignore[name-defined]
+    """每次页面加载完成后注入 CSS，绕过 WKWebView 默认禁用文字选中的行为。"""
+    win.events.loaded += lambda: win.evaluate_js(_ENABLE_TEXT_SELECT_JS)
+
+
 def run_dev_mode() -> None:
     """开发模式：先起 Vite dev server，再让 pywebview 直接加载 http://localhost:5173"""
     import webview
@@ -119,12 +133,13 @@ def run_dev_mode() -> None:
         from backend.api import Api
         from backend.settings import webview_size_kwargs
 
-        webview.create_window(
+        win = webview.create_window(
             "Arti Pre PSD (dev)",
             "http://localhost:5173",
             js_api=Api(),
             **webview_size_kwargs(),
         )
+        _attach_text_select(win)
         webview.start(debug=True)
     finally:
         log("关闭 Vite dev server ...")
@@ -145,12 +160,13 @@ def run_prod_mode() -> None:
     from backend.api import Api
     from backend.settings import webview_size_kwargs
 
-    webview.create_window(
+    win = webview.create_window(
         "Arti Pre PSD",
         str(index),
         js_api=Api(),
         **webview_size_kwargs(),
     )
+    _attach_text_select(win)
     webview.start()
 
 

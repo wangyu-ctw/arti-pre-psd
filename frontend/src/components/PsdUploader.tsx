@@ -14,49 +14,15 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
-  InboxOutlined,
   InfoCircleOutlined,
   IssuesCloseOutlined,
+  InboxOutlined,
   LoadingOutlined,
 } from "@ant-design/icons";
 import { getApi } from "../api";
-import { useAppStore } from "../store";
-import type { QueueItem } from "../store";
-
-const FULL_HEIGHT_BOX: React.CSSProperties = {
-  height: "100%",
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  background: "#ffffff",
-  borderRadius: 8,
-  padding: 24,
-};
-
-const DROP_AREA: React.CSSProperties = {
-  height: "100%",
-  border: "2px dashed #d9d9d9",
-  borderRadius: 8,
-  background: "#ffffff",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  cursor: "pointer",
-  transition: "border-color 0.2s, background 0.2s",
-};
-
-const QUEUE_WRAP: React.CSSProperties = {
-  height: "100%",
-  minHeight: 0,
-  background: "#ffffff",
-  borderRadius: 8,
-  border: "1px solid #e5e7eb",
-  padding: 16,
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-};
+import { useAppStore } from "../store/appStore";
+import type { QueueItem } from "../store/appStore";
+import "./PsdUploader.css";
 
 const STATUS_TEXT = {
   queued: "排队中",
@@ -75,7 +41,7 @@ export function PsdUploader() {
   const setStage = useAppStore((s) => s.setPreprocessStage);
   const setPreprocessError = useAppStore((s) => s.setPreprocessError);
   const setPsStatus = useAppStore((s) => s.setPsStatus);
-  const initQueue   = useAppStore((s) => s.initQueue);
+  const initQueue = useAppStore((s) => s.initQueue);
   const appendQueue = useAppStore((s) => s.appendQueue);
   const setQueue = useAppStore((s) => s.setQueue);
   const cancelQueueItem = useAppStore((s) => s.cancelQueueItem);
@@ -93,14 +59,14 @@ export function PsdUploader() {
       const r = await api.ps_get_status();
       if (!r.ok || !r.data) {
         setPreprocessError(r.error ?? "ps_get_status 失败");
-        setStage("failure");
+        setStage("ps_missing");
         return;
       }
       setPsStatus(r.data);
       setStage(r.data.ready ? "idle" : "ps_missing");
     } catch (e) {
       setPreprocessError(String(e));
-      setStage("failure");
+      setStage("ps_missing");
     }
   }
 
@@ -111,6 +77,7 @@ export function PsdUploader() {
       if (!r.ok || !r.data) {
         if (r.error !== "用户取消选择") {
           message.error(r.error ?? "选择 Photoshop 失败");
+          console.error(r.error, r.data);
         }
         return;
       }
@@ -136,11 +103,11 @@ export function PsdUploader() {
       if (!pick.ok || !pick.data) {
         if (pick.error && pick.error !== "用户取消选择") {
           message.error(pick.error);
+          console.error(pick.error, pick.data);
         }
         return;
       }
 
-      // append=true 时保留历史记录追加，否则清空重建
       if (append) {
         appendQueue(pick.data);
       } else {
@@ -156,7 +123,6 @@ export function PsdUploader() {
           return;
         }
 
-        // 只处理本次新加入（status="queued"）的条目，历史条目不重复跑
         let workQueue = useAppStore.getState().queue.slice();
         const startIdx = workQueue.findIndex((it) => it.status === "queued");
         for (let i = startIdx < 0 ? 0 : startIdx; i < workQueue.length; i++) {
@@ -194,41 +160,29 @@ export function PsdUploader() {
 
   function statusIcon(item: QueueItem) {
     if (item.status === "queued") {
-      return <ClockCircleOutlined style={{ color: "#1677ff" }} />;
+      return <ClockCircleOutlined className="psu-icon-primary" />;
     } else if (item.status === "running") {
-      return <LoadingOutlined style={{ color: "#1677ff" }} spin />;
+      return <LoadingOutlined className="psu-icon-primary" spin />;
     }
     if (item.status === "success") {
-      return <CheckCircleOutlined style={{ color: "#52c41a" }} />;
+      return <CheckCircleOutlined className="psu-icon-success" />;
     }
     if (item.status === "warning") {
       return (
         <Popover
           placement="left"
           title="部分步骤被跳过"
-          content={      <Alert
-            type="warning"
-            showIcon
-            message="以下步骤出错被跳过，文件已经保存但可能不完美"
-            description={
-              <pre
-                style={{
-                  margin: 0,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  fontSize: 12,
-                  color: "#92400e",
-                  maxHeight: 240,
-                  overflow: "auto",
-                }}
-              >
-                {item.result?.step_errors}
-              </pre>
-            }
-            style={{ width: 420, textAlign: "left" }}
-          />}
+          content={
+            <Alert
+              type="warning"
+              showIcon
+              message="以下步骤出错被跳过，文件已经保存但可能不完美"
+              description={<pre className="psu-popover-pre">{item.result?.step_errors}</pre>}
+              className="psu-popover-alert"
+            />
+          }
         >
-          <IssuesCloseOutlined style={{ color: "#faad14", cursor: "pointer" }} />
+          <IssuesCloseOutlined className="psu-icon-warning psu-icon-pointer" />
         </Popover>
       );
     }
@@ -236,11 +190,9 @@ export function PsdUploader() {
       <Popover
         placement="left"
         title="处理失败详情"
-        content={<p style={{ color: "#b91c1c", whiteSpace: "pre-wrap", maxWidth: 420, margin: 0 }}>
-          {item.error ?? "未知错误"}
-        </p>}
+        content={<p className="psu-popover-error-text">{item.error ?? "未知错误"}</p>}
       >
-        <InfoCircleOutlined style={{ color: "#ff4d4f", cursor: "pointer" }} />
+        <InfoCircleOutlined className="psu-icon-danger psu-icon-pointer" />
       </Popover>
     );
   }
@@ -254,13 +206,13 @@ export function PsdUploader() {
       if (!r.ok) message.error(r.error ?? "在 Photoshop 中打开失败");
     } catch (e) {
       message.error(String(e));
+      console.error(e);
     }
   }
 
   function handleViewResult(item: QueueItem) {
     const path = item.result?.path;
     if (!path) return;
-    // switchTab=true：写入成功（含 confirm 确认后）自动跳转到标注器 Tab
     requestSetAnnotatingFile(path, true);
   }
 
@@ -288,19 +240,22 @@ export function PsdUploader() {
           return (
             <Button key="cancel" type="link" size="small" onClick={() => cancelQueueItem(item.id)}>
               取消
-            </Button>);
+            </Button>
+          );
         }
         if (item.status === "warning" || item.status === "success") {
-          return (<>
-            <Tooltip title="确保所有的psd文件处理完成再打开">
-              <Button key="open" type="link" size="small" onClick={() => void handleOpenInPs(item)}>
-                打开
+          return (
+            <>
+              <Tooltip title="确保所有的psd文件处理完成再打开">
+                <Button key="open" type="link" size="small" onClick={() => void handleOpenInPs(item)}>
+                  打开
+                </Button>
+              </Tooltip>
+              <Button key="view" type="link" size="small" onClick={() => void handleViewResult(item)}>
+                标注
               </Button>
-            </Tooltip>
-            <Button key="view" type="link" size="small" onClick={() => void handleViewResult(item)}>
-              标注
-            </Button>
-            </>);
+            </>
+          );
         }
         return null;
       },
@@ -309,9 +264,9 @@ export function PsdUploader() {
 
   if (stage === "loading_status") {
     return (
-      <div style={FULL_HEIGHT_BOX}>
+      <div className="psu-full-height-box">
         <Spin description="检测 Photoshop 状态..." size="large">
-          <div style={{ width: 200, height: 60 }} />
+          <div className="psu-spin-placeholder" />
         </Spin>
       </div>
     );
@@ -319,10 +274,10 @@ export function PsdUploader() {
 
   if (stage === "ps_missing") {
     return (
-      <div style={FULL_HEIGHT_BOX}>
+      <div className="psu-full-height-box">
         <Result
           status="warning"
-          icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
+          icon={<ExclamationCircleOutlined className="psu-result-warning-icon" />}
           title="未检测到 Photoshop"
           subTitle="请选择本机已安装的 Photoshop 应用，选定后会自动启动并记住路径，下次启动直接用。"
           extra={[
@@ -338,7 +293,7 @@ export function PsdUploader() {
   if (stage === "running" || stage === "success" || stage === "failure") {
     let ResultStatus: React.ReactNode;
     switch (stage) {
-      case "running":
+      case "running": {
         const total = queue.length;
         const done = queue.filter(
           (it) => it.status === "success" || it.status === "warning" || it.status === "failed",
@@ -346,52 +301,66 @@ export function PsdUploader() {
         ResultStatus = (
           <Result
             status="info"
-            icon={<ClockCircleOutlined style={{ color: "#1677ff" }} />}
+            icon={<ClockCircleOutlined className="psu-icon-primary" />}
             title="队列处理中"
             subTitle={`串行处理中：${done}/${total}`}
-          />);
+          />
+        );
         break;
-      case "success":
+      }
+      case "success": {
         const successCount = queue.filter((it) => it.status === "success").length;
         const warningCount = queue.filter((it) => it.status === "warning").length;
-        const failedSCount  = queue.filter((it) => it.status === "failed").length;
+        const failedSCount = queue.filter((it) => it.status === "failed").length;
         ResultStatus = (
           <Result
             status="success"
-            icon={<CheckCircleOutlined style={{ color: "#52c41a" }} />}
+            icon={<CheckCircleOutlined className="psu-icon-success" />}
             title="队列处理完成"
             subTitle={`全部完成：成功 ${successCount}，部分步骤跳过 ${warningCount}，失败 ${failedSCount}`}
             extra={[
-              <Button key="reset" onClick={() => resetPreprocess(psStatus)}>返回</Button>,
-              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>再处理一批</Button>,
+              <Button key="reset" onClick={() => resetPreprocess(psStatus)}>
+                返回
+              </Button>,
+              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>
+                再处理一批
+              </Button>,
             ]}
-          />);
+          />
+        );
         break;
-      case "failure":
+      }
+      case "failure": {
         const failedCount = queue.filter((it) => it.status === "failed").length;
         ResultStatus = (
           <Result
             status="error"
-            icon={<InfoCircleOutlined style={{ color: "#ff4d4f" }} />}
+            icon={<InfoCircleOutlined className="psu-icon-danger" />}
             title="队列处理失败"
             subTitle={`本批次全部失败，共 ${failedCount} 个文件`}
             extra={[
-              <Button key="reset" onClick={() => resetPreprocess(psStatus)}>返回</Button>,
-              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>再处理一批</Button>,
+              <Button key="reset" onClick={() => resetPreprocess(psStatus)}>
+                返回
+              </Button>,
+              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>
+                再处理一批
+              </Button>,
             ]}
-          />);
+          />
+        );
         break;
+      }
       default:
         ResultStatus = null;
         break;
     }
 
     return (
-      <div style={QUEUE_WRAP}>
+      <div className="psu-queue-wrap">
         {ResultStatus}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", width: "60%", margin: "0 auto" }}>
+        <div className="psu-queue-table-wrap">
           <Table<QueueItem>
-            styles={{ root: { borderStartEndRadius: "0", borderRadius: "0" }, content: { borderStartEndRadius: "0", borderRadius: "0" } }}
+            className="psu-queue-table"
             showHeader={false}
             dataSource={queue}
             rowKey="id"
@@ -401,29 +370,18 @@ export function PsdUploader() {
             size="small"
           />
         </div>
-    </div>
-    )
+      </div>
+    );
   }
 
   return (
-    <div
-      style={DROP_AREA}
-      onClick={() => void handlePickPsdAndProcessQueue()}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "#4f8cff";
-        e.currentTarget.style.background = "#f0f7ff";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "#d9d9d9";
-        e.currentTarget.style.background = "#ffffff";
-      }}
-    >
-      <div style={{ textAlign: "center" }}>
-        <InboxOutlined style={{ fontSize: 56, color: "#4f8cff" }} />
-        <div style={{ marginTop: 16, fontSize: 16 }}>点击选择多个 PSD 文件（串行排队处理）</div>
-        <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
+    <div className="psu-drop-area" onClick={() => void handlePickPsdAndProcessQueue()}>
+      <div className="psu-drop-inner">
+        <InboxOutlined className="psu-drop-icon" />
+        <div className="psu-drop-title">点击选择多个 PSD 文件（串行排队处理）</div>
+        <div className="psu-drop-sub">
           仅支持 .psd / .psb；失败不会阻塞后续文件
-          <p style={{ color: "red" }}>*执行前请确保你的ps里没有正在编辑的文件</p>
+          <p className="psu-drop-warning">*执行前请确保你的ps里没有正在编辑的文件</p>
         </div>
       </div>
     </div>

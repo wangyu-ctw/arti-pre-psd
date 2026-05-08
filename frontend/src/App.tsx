@@ -9,7 +9,7 @@ import { useMemo } from "react";
 import { getApi } from "./api";
 import { AnnotatorWorkspace } from "./components/AnnotatorWorkspace";
 import { PsdUploader } from "./components/PsdUploader";
-import { useAppStore, selectPreprocessBadge } from "./store";
+import { useAppStore, selectPreprocessBadge } from "./store/appStore";
 
 const { Content, Footer } = Layout;
 

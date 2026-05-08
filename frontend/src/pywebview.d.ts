@@ -43,6 +43,25 @@ export interface ProcessPsdPayload {
   step_errors: string;
 }
 
+export interface PsdLayerNode {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+  isGroup: boolean;
+  children?: PsdLayerNode[];
+}
+
+export interface PsdInfoPayload {
+  thumbnailB64: string;
+  psdWidth: number;
+  psdHeight: number;
+  layers: PsdLayerNode[];
+}
+
 export interface PyApi {
   open_external: (url: string) => Promise<BackendResult<OpenExternalPayload>>;
 
@@ -84,6 +103,20 @@ export interface PyApi {
    * 调用后 2 秒会把本 APP 窗口重新置顶。
    */
   open_psd_in_ps: (file_path: string) => Promise<BackendResult<Record<string, never>>>;
+
+  /**
+   * 解析 PSD 文件，返回原尺寸合成缩略图（base64 PNG）和完整图层树。
+   */
+  get_psd_info: (file_path: string) => Promise<BackendResult<PsdInfoPayload>>;
+
+  /**
+   * 弹原生 Save 对话框，将 CSV 字符串写入用户选择的路径（utf-8-sig 编码）。
+   * pywebview 环境下不能用 blob URL 触发下载，必须走此 API。
+   */
+  save_csv: (
+    content: string,
+    suggested_name: string,
+  ) => Promise<BackendResult<{ path: string }>>;
 }
 
 declare global {

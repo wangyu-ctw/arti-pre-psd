@@ -1,0 +1,63 @@
+/* AnnotatorWorkspace ─────────────────────────────────── */
+
+.aw-root {
+  height: 100%;
+  min-height: 0;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.aw-toolbar {
+  flex-shrink: 0;
+  padding: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.aw-file-input {
+  width: 50%;
+}
+
+/* Splitter dragger override */
+.aw-splitter-dragger {
+  background: #f0f0f0;
+}
+
+/* 展示区面板 */
+.aw-preview-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Loading 遮罩 */
+.aw-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+/* 空状态提示 */
+.aw-empty-hint {
+  height: 100%;
+  color: #bbb;
+  font-size: 14px;
+}
+
+/* 图层区面板 */
+.aw-layer-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.aw-delete-hint {
+  color: #999;
+  font-size: 12px;
+}
+
+.aw-delete-footer {
+  margin-top: 24px;
+}

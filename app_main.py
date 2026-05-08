@@ -29,12 +29,21 @@ def main() -> None:
     if not index.exists():
         raise SystemExit(f"未找到前端构建产物：{index}")
 
-    webview.create_window(
+    _ENABLE_TEXT_SELECT_JS = (
+        "(function(){"
+        "var s=document.createElement('style');"
+        "s.textContent='html,body,*{-webkit-user-select:text!important;user-select:text!important}';"
+        "document.head.appendChild(s);"
+        "})()"
+    )
+
+    win = webview.create_window(
         "Artiprepsd",
         str(index),
         js_api=Api(),
         **webview_size_kwargs(),
     )
+    win.events.loaded += lambda: win.evaluate_js(_ENABLE_TEXT_SELECT_JS)
     webview.start()
 
 

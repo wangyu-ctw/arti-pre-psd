@@ -32,3 +32,21 @@ export function deriveCleanedName(originalName: string): string {
   const m = /^(.*)\.psd$/i.exec(originalName);
   return m ? `${m[1]}.cleaned.psd` : `${originalName}.cleaned.psd`;
 }
+
+/**
+ * 触发浏览器下载 CSV 字符串为文件。
+ * 头部加 UTF-8 BOM，保证 Excel 正确识别中文。
+ */
+export function downloadCsv(content: string, filename: string): void {
+  const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

@@ -1,0 +1,170 @@
+/* PsdLayerPanel ──────────────────────────────────────── */
+
+/* 外层容器 */
+.plp-root {
+  height: 100%;
+  min-height: 0;
+}
+
+/* 60px 预留区 */
+.plp-header {
+  flex-shrink: 0;
+  height: 60px;
+  width: 100%;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+/* 展开/收起 caret 按钮 */
+.layer-node__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #595959;
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.layer-node__caret:hover {
+  color: #262626;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* header 内标签 */
+.plp-header-label {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+}
+
+/* 图层树滚动区 */
+.plp-tree-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── 单个节点行 ───────────────────────────────────────── */
+
+.layer-node {
+  background-color: transparent;
+  opacity: 1;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 6px 12px;
+  user-select: none;
+  transition: background-color 0.1s;
+}
+
+.layer-node--selected {
+  background-color: #fffbe6;
+}
+
+/* CSS-only hover，不依赖 JS state */
+.layer-node:not(.layer-node--disabled):hover {
+  background-color: #f5f5f5;
+}
+
+/* selected 优先级高于 hover */
+.layer-node--selected:hover {
+  background-color: #fffbe6;
+}
+
+.layer-node--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 左侧内容区（宽度充满，overflow hidden） */
+.layer-node__left {
+  flex: 1;
+  overflow: hidden;
+  /* paddingLeft 由 JS 根据 depth 动态设置 */
+}
+
+/* 第一行：名称 */
+.layer-node__name-row {
+  margin-bottom: 4px;
+}
+
+.layer-node__folder-icon {
+  color: #faad14;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.layer-node__name {
+  font-size: 12px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-node__name--group {
+  font-weight: 600;
+}
+
+/* 第二行：类型 Select + 坐标输入 */
+.layer-node__controls-row {
+  /* flex wrap 由 antd Flex 管理 */
+}
+
+.layer-node__type-select {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.layer-node__coord-input {
+  width: 62px;
+}
+
+.layer-node__coord-prefix {
+  font-size: 10px;
+  color: #aaa;
+}
+
+/* 右侧：眼睛图标 */
+.layer-node__eye {
+  flex-shrink: 0;
+  padding-top: 2px;
+  cursor: pointer;
+}
+
+.layer-node__eye-on {
+  font-size: 16px;
+  color: #555;
+}
+
+.layer-node__eye-off {
+  font-size: 16px;
+  color: #bbb;
+}
+
+/* ── 类型选项下拉内容 ─────────────────────────────────── */
+
+/* background 由 JS 动态设置 */
+.layer-option__dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.layer-option__label {
+  font-weight: 600;
+}
+
+.layer-option__desc {
+  color: #999;
+  font-size: 11px;
+}

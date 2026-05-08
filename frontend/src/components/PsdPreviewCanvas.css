@@ -1,0 +1,21 @@
+/* PsdPreviewCanvas ───────────────────────────────────── */
+
+.ppc-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* left/top/width/height 由 JS 动态设置，保留 inline style */
+.ppc-img {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ppc-canvas {
+  position: absolute;
+  cursor: crosshair;
+}

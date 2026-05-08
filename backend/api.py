@@ -292,6 +292,87 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def save_csv(self, content: str, suggested_name: str) -> dict[str, Any]:
+        """弹原生 Save 对话框，将 CSV 内容写入用户选择的路径。
+        使用 utf-8-sig 编码（自动加 BOM），Excel 打开中文不乱码。
+        """
+        try:
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+
+            saved = win.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=suggested_name,
+                file_types=("CSV files (*.csv)", "All files (*.*)"),
+            )
+            if not saved:
+                return {"ok": False, "error": "用户取消"}
+
+            save_path = saved if isinstance(saved, str) else saved[0]
+            Path(save_path).write_text(content, encoding="utf-8-sig")
+            return {"ok": True, "data": {"path": save_path}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def get_psd_info(self, file_path: str) -> dict[str, Any]:
+        """解析 PSD 文件，返回原尺寸合成缩略图（base64 PNG）和完整图层树。
+
+        图层树每个节点：id, name, x, y, width, height, visible, is_group, children。
+        id 使用节点在树中的唯一路径字符串，保证前端可安全用作 key。
+        """
+        try:
+            import base64
+            import io
+
+            from psd_tools import PSDImage
+            from psd_tools.api.layers import Group
+
+            if not isinstance(file_path, str) or not file_path:
+                return {"ok": False, "error": "empty file_path"}
+            if not Path(file_path).is_file():
+                return {"ok": False, "error": f"文件不存在：{file_path}"}
+
+            psd = PSDImage.open(file_path)
+
+            # 合成缩略图（原尺寸，不缩放）
+            composite = psd.composite()
+            buf = io.BytesIO()
+            composite.save(buf, format="PNG")
+            thumbnail_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+            def _extract(layers: Any, prefix: str) -> list[dict[str, Any]]:
+                result: list[dict[str, Any]] = []
+                for idx, layer in enumerate(layers):
+                    node_id = f"{prefix}/{idx}_{layer.name}"
+                    is_group = isinstance(layer, Group)
+                    left, top, right, bottom = int(layer.left), int(layer.top), int(layer.right), int(layer.bottom)
+                    node: dict[str, Any] = {
+                        "id": node_id,
+                        "name": layer.name,
+                        "x": left,
+                        "y": top,
+                        "width": right - left,
+                        "height": bottom - top,
+                        "visible": bool(layer.visible),
+                        "isGroup": is_group,
+                    }
+                    if is_group:
+                        node["children"] = _extract(layer, node_id)
+                    result.append(node)
+                return result
+
+            layers = _extract(psd, "root")
+
+            return {"ok": True, "data": {
+                "thumbnailB64": thumbnail_b64,
+                "psdWidth": psd.width,
+                "psdHeight": psd.height,
+                "layers": layers,
+            }}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
 
 # ---- 内部工具 -------------------------------------------------------
 
