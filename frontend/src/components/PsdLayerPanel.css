@@ -4,18 +4,33 @@
 .plp-root {
   height: 100%;
   min-height: 0;
+  position: relative;
 }
 
 /* 60px 预留区 */
 .plp-header {
   flex-shrink: 0;
-  height: 60px;
   width: 100%;
   border-bottom: 1px solid #e5e7eb;
   background: #fafafa;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
+  padding: 12px;
+}
+
+.plp-header h3 {
+  margin: 0;
+}
+
+.plp-header-input {
+  width: 102px;
+  text-align: right;
+}
+
+.plp-header-input input {
+  text-align: right;
+}
+
+.plp-header-select {
+  margin-top: 12px;
 }
 
 /* 展开/收起 caret 按钮 */
@@ -40,8 +55,8 @@
 
 /* header 内标签 */
 .plp-header-label {
-  font-size: 12px;
-  color: #666;
+  font-weight: bold;
+  color: #262626;
   white-space: nowrap;
 }
 
@@ -50,6 +65,21 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+/* 结构性操作处理中的遮罩层 */
+.plp-loading-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(1px);
+  z-index: 10;
 }
 
 /* ── 单个节点行 ───────────────────────────────────────── */
@@ -111,11 +141,6 @@
 
 .layer-node__name--group {
   font-weight: 600;
-}
-
-/* 第二行：类型 Select + 坐标输入 */
-.layer-node__controls-row {
-  /* flex wrap 由 antd Flex 管理 */
 }
 
 .layer-node__type-select {

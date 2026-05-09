@@ -315,6 +315,158 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def close_psd_session(self) -> dict[str, Any]:
+        """释放内存中的 PSD 会话，使 PSDImage 对象可被 GC 回收。
+        在前端关闭/切换标注文件时调用。
+        """
+        try:
+            from . import psd_session
+            psd_session.close()
+            return {"ok": True, "data": {}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def load_psd_session(self, file_path: str) -> dict[str, Any]:
+        """加载 PSD 文件并初始化内存会话。
+
+        除返回与 get_psd_info 相同的图层树和缩略图外，还将 PSD 保留在内存中，
+        供后续结构性操作（删除/解散/合并）使用，并通过 psd_undo / psd_save_as
+        管理版本回退和最终保存。
+        返回值比 get_psd_info 多一个 undoCount 字段（初始为 0）。
+        """
+        try:
+            from . import psd_session
+
+            if not isinstance(file_path, str) or not file_path:
+                return {"ok": False, "error": "empty file_path"}
+            if not Path(file_path).is_file():
+                return {"ok": False, "error": f"文件不存在：{file_path}"}
+
+            session = psd_session.load(file_path)
+            return {"ok": True, "data": session._result()}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_delete_nodes(self, ids: list[str]) -> dict[str, Any]:
+        """从当前会话中删除指定图层节点（含后代），返回更新后的树和缩略图。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+            return {"ok": True, "data": session.delete_nodes(ids)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_ungroup(self, ids: list[str]) -> dict[str, Any]:
+        """解散指定图层组，将其子节点上移一级，返回更新后的树和缩略图。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+            return {"ok": True, "data": session.ungroup(ids)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_merge_group(self, node_id: str) -> dict[str, Any]:
+        """合并图层组（简化版：移除子节点，组变为叶节点），返回更新后的树和缩略图。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+            return {"ok": True, "data": session.merge_group(node_id)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_merge_to_layer(self, ids: list[str], layer_name: str = "合并图层") -> dict[str, Any]:
+        """将选中的多个节点合并为单一叶节点，边界框为所有节点的并集。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+            return {"ok": True, "data": session.merge_nodes_to_layer(ids, layer_name)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_get_layer_preview(self, sid: int) -> dict[str, Any]:
+        """合成单个图层/图层组的预览图，返回 base64 PNG 及其位置信息。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+            result = session.get_layer_preview(sid)
+            if "error" in result:
+                return {"ok": False, "error": result["error"]}
+            return {"ok": True, "data": result}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_undo(self) -> dict[str, Any]:
+        """回退 PSD 上一步结构性操作（删除/解散/合并），返回回退后的树和缩略图。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话"}
+            result = session.undo()
+            if result is None:
+                return {"ok": False, "error": "已无历史可回退"}
+            return {"ok": True, "data": result}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_trim_history(self, keep_count: int) -> dict[str, Any]:
+        """将后端 PSD 历史栈裁剪到 keep_count 条（释放多余的 BytesIO 快照内存）。
+        前端 undo history 超出 MAX_HISTORY 而丢弃旧 PSD 步骤时应调用此接口。
+        """
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": True}  # 无会话时静默成功
+            session.trim_history(keep_count)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def psd_save_as(self, suggested_name: str) -> dict[str, Any]:
+        """弹原生 Save 对话框，将当前 PSD 状态（含已删除图层的 visible 修改）写出为新文件。"""
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+
+            saved = win.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=suggested_name,
+                file_types=("PSD files (*.psd)", "All files (*.*)"),
+            )
+            if not saved:
+                return {"ok": False, "error": "用户取消"}
+
+            save_path = saved if isinstance(saved, str) else saved[0]
+            session.save_as(save_path)
+            return {"ok": True, "data": {"path": save_path}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def get_psd_info(self, file_path: str) -> dict[str, Any]:
         """解析 PSD 文件，返回原尺寸合成缩略图（base64 PNG）和完整图层树。
 

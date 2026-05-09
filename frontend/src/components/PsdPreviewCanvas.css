@@ -19,3 +19,18 @@
   position: absolute;
   cursor: crosshair;
 }
+
+/* Alt+Hover 图层预览：主缩略图淡出 */
+.ppc-img--dimmed {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* 单图层预览叠加图，按图层在 PSD 中的实际位置定位 */
+.ppc-layer-preview {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  /* 强制拉伸到计算出的 width/height，与图层 bbox 对齐 */
+  object-fit: fill;
+}

@@ -73,6 +73,11 @@ const MAX_HISTORY = 10;
 type HistorySnapshot = {
   layers: PsdLayerNode[];
   layerStates: Record<string, LayerState>;
+  /**
+   * true 表示该步对应一次 Python 结构性操作（删除/解散/合并等）。
+   * undo() 消费此快照时需同时调用 psd_undo() 撤销 Python 端改动。
+   */
+  hasPsdChange?: boolean;
 };
 
 /**
@@ -122,6 +127,14 @@ type AnnotatorStore = {
   canvasSelectMode: CanvasSelectMode;
   /** 撤销历史栈（最多 MAX_HISTORY 条） */
   history: HistorySnapshot[];
+  /** Python 结构性操作（删除/解散/合并/undo）进行中 */
+  structuralLoading: boolean;
+  /**
+   * Alt+Hover 触发的单图层预览。
+   * previewB64: 图层合成图（PNG base64）；x/y/width/height: 图层在 PSD 中的位置（像素）。
+   * null 表示无预览（正常展示全量缩略图）。
+   */
+  layerPreview: { previewB64: string; x: number; y: number; width: number; height: number } | null;
 
   /** 加载新 PSD：一次性写入数据并初始化所有节点状态 */
   loadPsdData: (data: PsdInfoPayload) => void;
@@ -177,8 +190,23 @@ type AnnotatorStore = {
    */
   mergeGroup: (id: string) => void;
 
-  /** 撤销上一步操作（Cmd+Z），最多回退 MAX_HISTORY 步 */
-  undo: () => void;
+  /**
+   * 撤销上一步操作（Cmd+Z），最多回退 MAX_HISTORY 步。
+   * 返回 true 表示该步涉及 Python 结构性改动，调用方需同时调 psd_undo()。
+   */
+  undo: () => boolean;
+
+  /** 设置图层预览（Alt+Hover 触发） */
+  setLayerPreview: (data: { previewB64: string; x: number; y: number; width: number; height: number }) => void;
+  /** 清除图层预览，恢复全量缩略图 */
+  clearLayerPreview: () => void;
+
+  /**
+   * 接收 Python 结构性操作（删除/解散/合并）的返回结果，更新 store。
+   * - 自动将操作前状态推入历史（hasPsdChange=true），使 Cmd+Z 可同步撤销 Python 端
+   * - 若 isUndo=true（从 undo 流程中调用），跳过入栈，只同步数据
+   */
+  updateFromPsdOp: (data: PsdInfoPayload, isUndo?: boolean) => void;
 };
 
 // ─── 创建 store ───────────────────────────────────────────────────────────
@@ -191,6 +219,8 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
   pendingDeleteState: null,
   canvasSelectMode: "top",
   history: [],
+  structuralLoading: false,
+  layerPreview: null,
 
   loadPsdData: (data) => {
     const states: Record<string, LayerState> = {};
@@ -265,6 +295,12 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
           next[k] = st;
         }
       }
+      // 若目标节点不在 layerStates（如结构操作后恰好未被迁移），
+      // 补充写入默认状态并选中，避免点击无响应。
+      if (!(id in prev)) {
+        next[id] = { eyeOn: true, type: "", selected: !wasSelected };
+        changed = true;
+      }
       return changed ? { layerStates: next, scrollToId: id } : { scrollToId: id };
     }),
 
@@ -337,6 +373,9 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
       };
     }),
 
+  setLayerPreview: (data) => set({ layerPreview: data }),
+  clearLayerPreview: () => set({ layerPreview: null }),
+
   setCanvasSelectMode: (mode) => set({ canvasSelectMode: mode }),
 
   requestDelete: (ids) => {
@@ -391,15 +430,99 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
 
   undo: () => {
     const s = get();
-    if (s.history.length === 0) return;
+    if (s.history.length === 0) return false;
     const snapshot = s.history[s.history.length - 1];
+    const hasPsdChange = snapshot.hasPsdChange ?? false;
     _skipHistory = true;
-    set({
-      psdData: s.psdData ? { ...s.psdData, layers: snapshot.layers } : null,
-      layerStates: snapshot.layerStates,
-      history: s.history.slice(0, -1),
-      pendingDeleteState: null,
-    });
+    if (hasPsdChange) {
+      // 结构性操作：只恢复 layerStates（layers/缩略图由后续 psd_undo() 返回值更新）
+      set({
+        layerStates: snapshot.layerStates,
+        history: s.history.slice(0, -1),
+        pendingDeleteState: null,
+      });
+    } else {
+      set({
+        psdData: s.psdData ? { ...s.psdData, layers: snapshot.layers } : null,
+        layerStates: snapshot.layerStates,
+        history: s.history.slice(0, -1),
+        pendingDeleteState: null,
+      });
+    }
+    _skipHistory = false;
+    return hasPsdChange;
+  },
+
+  updateFromPsdOp: (data, isUndo = false) => {
+    const s = get();
+    if (!s.psdData) return;
+
+    const newLayerStates: Record<string, LayerState> = {};
+
+    if (isUndo) {
+      // ── undo 回流 ────────────────────────────────────────────────────────────
+      // store.undo() 已将 layerStates 恢复为操作前快照（PRE-OP keys）。
+      // Python 返回的 data.layers 也是回退后的树（同样是 PRE-OP keys）。
+      // 因此直接 byId 匹配即可，不需要经过 sidToState 中转。
+      //
+      // ⚠️ 不能在这里用 sidToState：此时 s.psdData.layers 还是 POST-OP 层，
+      //   其 id 可能因重建索引与 PRE-OP 另一个同名层碰撞（如两个都叫 "A" 的层），
+      //   导致 sidToState 把错误的 eyeOn/type 写给刚刚被恢复的节点。
+      for (const node of flattenNodes(data.layers)) {
+        newLayerStates[node.id] =
+          s.layerStates[node.id] ??
+          { eyeOn: node.visible ?? true, type: "", selected: false };
+      }
+    } else {
+      // ── 正向结构操作 ──────────────────────────────────────────────────────────
+      // 用 psdSid 建立"旧节点 sid → 旧 LayerState"映射，
+      // 这样即使 id（路径字符串）因重建索引而变化，也能迁移 eyeOn/type。
+      const sidToState = new Map<number, LayerState>();
+      for (const node of flattenNodes(s.psdData.layers)) {
+        if (node.psdSid != null) {
+          const st = s.layerStates[node.id];
+          if (st) sidToState.set(node.psdSid, st);
+        }
+      }
+      for (const node of flattenNodes(data.layers)) {
+        const bySid = node.psdSid != null ? sidToState.get(node.psdSid) : undefined;
+        const byId = s.layerStates[node.id];
+        newLayerStates[node.id] =
+          bySid ?? byId ?? { eyeOn: node.visible ?? true, type: "", selected: false };
+      }
+    }
+
+    _skipHistory = true;
+    if (isUndo) {
+      // undo 回流：只同步数据，不再入栈
+      set({
+        psdData: data,
+        layerStates: newLayerStates,
+        pendingDeleteState: null,
+        structuralLoading: false,
+      });
+    } else {
+      // 正向操作：把操作前的状态推入历史（hasPsdChange=true），
+      // 使 Cmd+Z 能够同时撤销 Python 端改动
+      const snapshot: HistorySnapshot = {
+        layers: s.psdData.layers,
+        layerStates: s.layerStates,
+        hasPsdChange: true,
+      };
+      set((cur) => ({
+        psdData: data,
+        layerStates: newLayerStates,
+        pendingDeleteState: null,
+        structuralLoading: false,
+        history: [...cur.history, snapshot].slice(-MAX_HISTORY),
+      }));
+
+      // 通知后端将快照数裁剪到前端可触达的 PSD 步骤数，及时释放 BytesIO 内存。
+      // 前端 history 被 slice(-MAX_HISTORY) 裁剪时，旧的 hasPsdChange 步骤会被丢弃，
+      // 后端对应的快照就成了废内存——在此同步裁剪。
+      const psdSteps = get().history.filter((h) => h.hasPsdChange).length;
+      void window.pywebview?.api.psd_trim_history(psdSteps).catch(() => {});
+    }
     _skipHistory = false;
   },
 }));

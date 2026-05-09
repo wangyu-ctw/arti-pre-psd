@@ -47,6 +47,7 @@ export function PsdPreviewCanvas() {
   const layerStates = useAnnotatorStore((s) => s.layerStates);
   const hoveredLayerId = useAnnotatorStore((s) => s.hoveredLayerId);
   const canvasSelectMode = useAnnotatorStore((s) => s.canvasSelectMode);
+  const layerPreview = useAnnotatorStore((s) => s.layerPreview);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -252,6 +253,18 @@ export function PsdPreviewCanvas() {
 
   const posStyle = { left: imgRect.left, top: imgRect.top, width: imgRect.width, height: imgRect.height };
 
+  // 计算图层预览图的叠加位置（PSD 坐标 → 显示坐标）
+  const previewOverlay = layerPreview && imgRect.width > 0 && psdData ? (() => {
+    const scaleX = imgRect.width / psdData.psdWidth;
+    const scaleY = imgRect.height / psdData.psdHeight;
+    return {
+      left: imgRect.left + layerPreview.x * scaleX,
+      top: imgRect.top + layerPreview.y * scaleY,
+      width: layerPreview.width * scaleX,
+      height: layerPreview.height * scaleY,
+    };
+  })() : null;
+
   return (
     <div
       ref={containerRef}
@@ -261,9 +274,17 @@ export function PsdPreviewCanvas() {
       <img
         src={`data:image/png;base64,${psdData.thumbnailB64}`}
         alt="PSD preview"
-        className="ppc-img"
+        className={`ppc-img${layerPreview ? " ppc-img--dimmed" : ""}`}
         style={posStyle}
       />
+      {previewOverlay && (
+        <img
+          src={`data:image/png;base64,${layerPreview!.previewB64}`}
+          alt="layer preview"
+          className="ppc-layer-preview"
+          style={previewOverlay}
+        />
+      )}
       <canvas
         ref={canvasRef}
         className="ppc-canvas"
