@@ -291,28 +291,26 @@ export function AnnotatorWorkspace() {
     if (!pd) return null;
     const rows: string[] = [];
     for (const node of flattenNodes(pd.layers)) {
+      if (node.isGroup) continue;
       const state = layerStates[node.id];
-      if (!state?.type) continue;
+      const type = state?.type ?? "";
       const layerInfo = JSON.stringify({ layer_name: node.name });
       const escapedInfo = `"${layerInfo.replace(/"/g, '""')}"`;
-      rows.push(`${state.type},${node.x},${node.y},${node.width},${node.height},${escapedInfo}`);
+      rows.push(`${type},${node.x},${node.y},${node.width},${node.height},${escapedInfo}`);
     }
     if (rows.length === 0) return "";
-    return ["class_label,x,y,w,h,psd_layer_info", ...rows].join("\n");
+    const header = `${pd.psdWidth},${pd.psdHeight}`;
+    return [header, "class_label,x,y,w,h,psd_layer_info", ...rows].join("\n");
   }
 
   async function handleExportZip() {
-    const content = buildCsvContent();
-    if (content === null) return;
-    if (content === "") {
-      message.warning("暂无已标注的图层，请先为图层选择类型");
-      return;
-    }
+    const { psdData: pd, layerStates } = useAnnotatorStore.getState();
+    if (!pd) return;
     const baseName = annotatingFile.split(/[\\/]/).pop() ?? "export";
     const suggested = baseName.replace(/\.psd$/i, "") + "_annotated";
     try {
       const api = await getApi();
-      const r = await api.save_zip(content, suggested);
+      const r = await api.save_zip(JSON.stringify(layerStates), suggested);
       if (!r.ok && r.error !== "用户取消") message.error(r.error ?? "保存失败");
       else if (r.ok) showSavedMessage(r.data?.path ?? "");
     } catch (e) {
@@ -323,10 +321,6 @@ export function AnnotatorWorkspace() {
   async function handleDownloadCsv() {
     const content = buildCsvContent();
     if (content === null) return;
-    if (content === "") {
-      message.warning("暂无已标注的图层，请先为图层选择类型");
-      return;
-    }
     const baseName = annotatingFile.split(/[\\/]/).pop() ?? "export";
     const filename = baseName.replace(/\.psd$/i, "") + ".csv";
     try {

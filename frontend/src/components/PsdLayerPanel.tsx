@@ -246,34 +246,36 @@ const LayerNode = React.memo(function LayerNode({
               仅对 Select 单独阻止冒泡（防止点 Select 意外 toggle 选中状态）；
               只读 Input 不阻止，点坐标区也能选中节点。 */}
           <Flex align="center" gap={4} wrap="nowrap" justify="flex-end">
-            <div onClick={(e) => e.stopPropagation()}>
-              <Select
-                size="small"
-                className="layer-node__type-select"
-                value={state.type || undefined}
-                placeholder="类型"
-                popupMatchSelectWidth={false}
-                allowClear
-                options={LAYER_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-                labelRender={(label) => {
-                  return (
-                    <div>
-                      <XFilled style={{ color: LAYER_TYPE_MAP[label.value].color, marginRight: 4 }} />{label.label}
-                    </div>
-                  );
-                }}
-                optionRender={(option) => {
-                  const opt = LAYER_TYPE_MAP[option.value as string];
-                  if (!opt) return option.label;
-                  return (
-                    <div>
-                      <XFilled style={{ color: opt.color, marginRight: 4 }} />{opt.label}
-                    </div>
-                  );
-                }}
-                onChange={(val) => useAnnotatorStore.getState().setType(node.id, val ?? "")}
-              />
-            </div>
+            {!node.isGroup && (
+              <div onClick={(e) => e.stopPropagation()}>
+                <Select
+                  size="small"
+                  className="layer-node__type-select"
+                  value={state.type || undefined}
+                  placeholder="类型"
+                  popupMatchSelectWidth={false}
+                  allowClear
+                  options={LAYER_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                  labelRender={(label) => {
+                    return (
+                      <div>
+                        <XFilled style={{ color: LAYER_TYPE_MAP[label.value].color, marginRight: 4 }} />{label.label}
+                      </div>
+                    );
+                  }}
+                  optionRender={(option) => {
+                    const opt = LAYER_TYPE_MAP[option.value as string];
+                    if (!opt) return option.label;
+                    return (
+                      <div>
+                        <XFilled style={{ color: opt.color, marginRight: 4 }} />{opt.label}
+                      </div>
+                    );
+                  }}
+                  onChange={(val) => useAnnotatorStore.getState().setType(node.id, val ?? "")}
+                />
+              </div>
+            )}
             {(["x", "y", "width", "height"] as const).map((field) => (
               <Input
                 key={field}

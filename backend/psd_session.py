@@ -21,6 +21,7 @@ import base64
 import copy
 import io
 import itertools
+import json
 import logging
 import os
 import shutil
@@ -1102,6 +1103,100 @@ class PsdSession:
     def save_as(self, path: str) -> None:
         """将当前状态保存到用户指定路径（直接保存 _psd，_record 已含所有修改）。"""
         self._psd.save(path)
+
+    def build_export_package(
+        self, layer_states: dict[str, dict[str, str]]
+    ) -> tuple[str, list[tuple[str, bytes]]]:
+        """同时生成 CSV 内容（含 layer_asset 列）和所有叶子节点 PNG 切片。
+
+        layer_states: {node_id: {"type": "xxx", ...}} 来自前端 annotatorStore。
+        返回 (csv_content, [(filename, png_bytes), ...])。
+        """
+        import re
+
+        slices: list[tuple[str, bytes]] = []
+        csv_rows: list[str] = []
+        counter: dict[str, int] = {}
+
+        def _safe_filename(raw: str) -> str:
+            safe = re.sub(r'[\\/*?:"<>|\x00-\x1f]', "_", raw).strip() or "layer"
+            n = counter.get(safe, 0)
+            counter[safe] = n + 1
+            return f"{safe}.png" if n == 0 else f"{safe}_{n}.png"
+
+        def _walk(nodes: list[dict[str, Any]]) -> None:
+            for node in nodes:
+                if node.get("isGroup"):
+                    _walk(node.get("children") or [])
+                    continue
+
+                node_id = node["id"]
+                state = layer_states.get(node_id, {})
+                layer_type = state.get("type", "") if isinstance(state, dict) else ""
+
+                layer = self._layer_map.get(node["_sid"])
+                filename = _safe_filename(node.get("name", "layer"))
+
+                if layer is not None:
+                    try:
+                        img = layer.composite()
+                        if img is not None:
+                            buf = io.BytesIO()
+                            img.save(buf, format="PNG")
+                            slices.append((filename, buf.getvalue()))
+                    except Exception as exc:
+                        logger.warning("build_export_package: 图层 %r 合成失败: %s", node.get("name"), exc)
+                        filename = ""  # 合成失败时 layer_asset 留空
+
+                layer_info = json.dumps({"layer_name": node.get("name", "")}, ensure_ascii=False)
+                escaped_info = '"' + layer_info.replace('"', '""') + '"'
+                csv_rows.append(
+                    f"{layer_type},{node['x']},{node['y']},{node['width']},{node['height']},{escaped_info},{filename}"
+                )
+
+        _walk(self._current_tree)
+
+        header = f"{self._psd.width},{self._psd.height}"
+        col_names = "class_label,x,y,w,h,psd_layer_info,layer_asset"
+        csv_content = "\n".join([header, col_names] + csv_rows)
+        return csv_content, slices
+
+    def get_all_layer_slices(self) -> list[tuple[str, bytes]]:
+        """合成所有叶子节点的 PNG 切片，返回 [(filename, png_bytes), ...] 列表。
+        跳过合成失败或内容为空的节点；重名节点自动加数字后缀。
+        """
+        import re
+
+        results: list[tuple[str, bytes]] = []
+        counter: dict[str, int] = {}
+
+        def _unique_name(raw: str) -> str:
+            safe = re.sub(r'[\\/*?:"<>|\x00-\x1f]', "_", raw).strip() or "layer"
+            n = counter.get(safe, 0)
+            counter[safe] = n + 1
+            return f"{safe}.png" if n == 0 else f"{safe}_{n}.png"
+
+        def _walk(nodes: list[dict[str, Any]]) -> None:
+            for node in nodes:
+                if node.get("isGroup"):
+                    _walk(node.get("children") or [])
+                    continue
+                layer = self._layer_map.get(node["_sid"])
+                if layer is None:
+                    continue
+                try:
+                    img = layer.composite()
+                except Exception as exc:
+                    logger.warning("get_all_layer_slices: 图层 %r 合成失败: %s", node.get("name"), exc)
+                    continue
+                if img is None:
+                    continue
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                results.append((_unique_name(node.get("name", "layer")), buf.getvalue()))
+
+        _walk(self._current_tree)
+        return results
 
     def get_psd_bytes(self) -> bytes:
         """将当前 PSD 状态序列化为字节流并返回（用于打包 ZIP 等内存操作）。"""

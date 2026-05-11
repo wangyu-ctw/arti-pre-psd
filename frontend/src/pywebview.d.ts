@@ -183,11 +183,12 @@ export interface PyApi {
   ) => Promise<BackendResult<{ path: string }>>;
 
   /**
-   * 弹原生 Save 对话框，将 CSV 内容和当前 PSD 打包为 ZIP 文件保存。
-   * ZIP 内含 {suggested_name}.csv 和 {suggested_name}.psd。
+   * 弹原生 Save 对话框，将 CSV（含 layer_asset 列）、PSD 和图层切片打包为 ZIP。
+   * layer_states_json: annotatorStore.layerStates 的 JSON 序列化。
+   * ZIP 结构：{name}.csv / {name}.psd / assets/*.png
    */
   save_zip: (
-    csv_content: string,
+    layer_states_json: string,
     suggested_name: string,
   ) => Promise<BackendResult<{ path: string }>>;
 }

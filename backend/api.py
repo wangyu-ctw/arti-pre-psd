@@ -315,12 +315,14 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    def save_zip(self, csv_content: str, suggested_name: str) -> dict[str, Any]:
-        """弹原生 Save 对话框，将 CSV 和当前 PSD 打包为 ZIP 文件保存。
-        ZIP 内包含 {suggested_name}.csv 和 {suggested_name}.psd 两个文件。
+    def save_zip(self, layer_states_json: str, suggested_name: str) -> dict[str, Any]:
+        """弹原生 Save 对话框，将 CSV（含 layer_asset 列）、PSD 和图层切片打包为 ZIP。
+        layer_states_json: 前端 annotatorStore.layerStates 序列化的 JSON 字符串。
+        ZIP 结构：{name}.csv / {name}.psd / assets/*.png
         """
         try:
             import io as _io
+            import json as _json
             import zipfile
 
             from . import psd_session
@@ -342,15 +344,18 @@ class Api:
                 return {"ok": False, "error": "用户取消"}
 
             save_path = saved if isinstance(saved, str) else saved[0]
-            base_name = Path(save_path).stem  # 去掉 .zip，用作内部文件名
+            base_name = Path(save_path).stem
 
+            layer_states: dict = _json.loads(layer_states_json) if layer_states_json else {}
+            csv_content, slices = session.build_export_package(layer_states)
             psd_bytes = session.get_psd_bytes()
-            csv_bytes = csv_content.encode("utf-8-sig")
 
             zip_buf = _io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr(base_name + ".csv", csv_bytes)
+                zf.writestr(base_name + ".csv", csv_content.encode("utf-8-sig"))
                 zf.writestr(base_name + ".psd", psd_bytes)
+                for filename, png_bytes in slices:
+                    zf.writestr(f"assets/{filename}", png_bytes)
 
             Path(save_path).write_bytes(zip_buf.getvalue())
             return {"ok": True, "data": {"path": save_path}}
