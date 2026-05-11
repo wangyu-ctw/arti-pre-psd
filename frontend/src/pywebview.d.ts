@@ -146,6 +146,9 @@ export interface PyApi {
     layer_name?: string,
   ) => Promise<BackendResult<PsdInfoPayload>>;
 
+  /** 返回当前会话的图层树和 PSD 尺寸（不渲染缩略图，供调试用）。 */
+  psd_get_tree: () => Promise<BackendResult<{ psdWidth: number; psdHeight: number; layers: PsdLayerNode[]; undoCount: number }>>;
+
   /**
    * 合成单个图层/图层组的预览图，返回 base64 PNG 及图层在 PSD 中的位置。
    * sid 为 PsdLayerNode.psdSid；虚拟节点（合并为一个图层产生的占位）返回 ok=false。
@@ -176,6 +179,15 @@ export interface PyApi {
    */
   save_csv: (
     content: string,
+    suggested_name: string,
+  ) => Promise<BackendResult<{ path: string }>>;
+
+  /**
+   * 弹原生 Save 对话框，将 CSV 内容和当前 PSD 打包为 ZIP 文件保存。
+   * ZIP 内含 {suggested_name}.csv 和 {suggested_name}.psd。
+   */
+  save_zip: (
+    csv_content: string,
     suggested_name: string,
   ) => Promise<BackendResult<{ path: string }>>;
 }

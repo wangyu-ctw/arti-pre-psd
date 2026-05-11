@@ -112,7 +112,12 @@ function main(){
 	for (var i = 0; i < allArtLayers.length; i++){ 
 		try{ 
 			doc.activeLayer = allArtLayers[i];
-			if (hasLayerStyle() == true){ // Only if the has a layer style
+			var shouldRasterizeSmartObject = isSmartObjectLayer(allArtLayers[i]);
+			var shouldFlattenLayerStyle = hasLayerStyle();
+			if (shouldRasterizeSmartObject == true){
+					rasterizeLayer(); // Also rasterize Smart Objects during this cleanup step
+				}
+			if (shouldFlattenLayerStyle == true && hasLayerStyle() == true){ // Only if the layer still has a layer style
 					flattenLayerStyles(); // Flatten the styles into the layer
 				}
 		}catch(e) {
@@ -219,6 +224,34 @@ function hasLayerStyle() {
 		hasLayerStyle = false;
 	}
 	return hasLayerStyle;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Function: isSmartObjectLayer
+// Usage: see if the supplied ArtLayer is a Smart Object
+// Input: layer, ArtLayer
+// Return: true if the layer is a Smart Object
+///////////////////////////////////////////////////////////////////////////////
+function isSmartObjectLayer(layer) {
+	try {
+		return layer.kind === LayerKind.SMARTOBJECT;
+	}catch(e) {
+		return false;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Function: rasterizeLayer
+// Usage: rasterize the current layer to pixels
+// Input: <none> Must have an open document
+// Return: <none>
+///////////////////////////////////////////////////////////////////////////////
+function rasterizeLayer() {
+	try {
+		app.activeDocument.activeLayer.rasterize(RasterizeType.ENTIRELAYER);
+	}catch(e) {
+		; // do nothing
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

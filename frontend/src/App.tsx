@@ -100,7 +100,7 @@ export default function App() {
           href={`mailto:${CONTACT_EMAIL}`}
           onClick={(e) => {
             e.preventDefault();
-            void openMail();
+            openMail();
           }}
           style={{ color: "#4f8cff" }}
         >

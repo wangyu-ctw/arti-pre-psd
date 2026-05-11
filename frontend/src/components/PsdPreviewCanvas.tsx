@@ -216,14 +216,18 @@ export function PsdPreviewCanvas() {
 
     if (hitNodes.length === 0) { useAnnotatorStore.getState().clearSelection(); return; }
 
+    // 优先叶子节点，无叶子时回退到群组节点
+    const leafHits = hitNodes.filter((n) => !n.isGroup);
+    const candidates = leafHits.length > 0 ? leafHits : hitNodes;
+
     let hitIds: string[];
     if (canvasSelectMode === "top") {
-      // 视觉最顶层的单个节点（与 hover 逻辑一致，取反序第一个）
-      const top = [...hitNodes].reverse()[0];
+      // 视觉最顶层的叶子节点（store 已按 PS 顺序存储，第一个即最顶层）
+      const top = candidates[0];
       hitIds = [top.id];
     } else if (canvasSelectMode === "ancestors") {
-      // 视觉最顶层节点 + 它在树中的所有祖先组
-      const top = [...hitNodes].reverse()[0];
+      // 视觉最顶层叶子节点 + 它在树中的所有祖先组
+      const top = candidates[0];
       hitIds = [top.id, ...getAncestorIds(top.id, psdData.layers)];
     } else {
       // "all"：命中的全部节点（原有行为）
@@ -241,10 +245,12 @@ export function PsdPreviewCanvas() {
     if (!coord) return;
 
     const allNodes = flattenNodes(psdData.layers);
-    const hit = [...allNodes].reverse().find((n) => {
+    const isHit = (n: PsdLayerNode) => {
       if (layerStates[n.id]?.eyeOn === false) return false;
       return coord.x >= n.x && coord.x <= n.x + n.width && coord.y >= n.y && coord.y <= n.y + n.height;
-    });
+    };
+    // 优先叶子节点，无叶子时回退到群组节点
+    const hit = allNodes.find((n) => !n.isGroup && isHit(n)) ?? allNodes.find(isHit);
 
     throttledSetHovered(hit?.id ?? null);
   }

@@ -1103,6 +1103,12 @@ class PsdSession:
         """将当前状态保存到用户指定路径（直接保存 _psd，_record 已含所有修改）。"""
         self._psd.save(path)
 
+    def get_psd_bytes(self) -> bytes:
+        """将当前 PSD 状态序列化为字节流并返回（用于打包 ZIP 等内存操作）。"""
+        buf = io.BytesIO()
+        self._psd.save(buf)
+        return buf.getvalue()
+
     @property
     def path(self) -> str:
         return self._path

@@ -33,6 +33,19 @@
   margin-top: 12px;
 }
 
+/* 已选节点导航 */
+.plp-nav {
+  flex-shrink: 0;
+}
+
+.plp-nav__counter {
+  font-size: 12px;
+  color: #595959;
+  white-space: nowrap;
+  min-width: 52px;
+  text-align: center;
+}
+
 /* 展开/收起 caret 按钮 */
 .layer-node__caret {
   display: inline-flex;
@@ -58,6 +71,7 @@
   font-weight: bold;
   color: #262626;
   white-space: nowrap;
+  margin-right: 8px;
 }
 
 /* 图层树滚动区 */
@@ -192,4 +206,8 @@
 .layer-option__desc {
   color: #999;
   font-size: 11px;
+}
+
+.plp-nav__label {
+  margin-left: 8px;
 }

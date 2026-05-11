@@ -10,6 +10,13 @@ import type { LayerState } from "../utils/types";
 
 // ─── 树工具（内部用）──────────────────────────────────────────────────────
 
+/** 递归反转图层列表顺序（与 PS 面板显示顺序保持一致） */
+function reverseLayersDeep(nodes: PsdLayerNode[]): PsdLayerNode[] {
+  return [...nodes].reverse().map((n) =>
+    n.children ? { ...n, children: reverseLayersDeep(n.children) } : n,
+  );
+}
+
 function flattenNodes(nodes: PsdLayerNode[]): PsdLayerNode[] {
   const result: PsdLayerNode[] = [];
   const walk = (list: PsdLayerNode[]) => {
@@ -223,12 +230,13 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
   layerPreview: null,
 
   loadPsdData: (data) => {
+    const normalized = { ...data, layers: reverseLayersDeep(data.layers) };
     const states: Record<string, LayerState> = {};
-    for (const n of flattenNodes(data.layers)) {
+    for (const n of flattenNodes(normalized.layers)) {
       states[n.id] = { eyeOn: true, type: "", selected: false };
     }
     _skipHistory = true;
-    set({ psdData: data, layerStates: states, hoveredLayerId: null, scrollToId: null, history: [] });
+    set({ psdData: normalized, layerStates: states, hoveredLayerId: null, scrollToId: null, history: [] });
     _skipHistory = false;
   },
 
@@ -457,6 +465,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
     const s = get();
     if (!s.psdData) return;
 
+    const normalized = { ...data, layers: reverseLayersDeep(data.layers) };
     const newLayerStates: Record<string, LayerState> = {};
 
     if (isUndo) {
@@ -468,7 +477,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
       // ⚠️ 不能在这里用 sidToState：此时 s.psdData.layers 还是 POST-OP 层，
       //   其 id 可能因重建索引与 PRE-OP 另一个同名层碰撞（如两个都叫 "A" 的层），
       //   导致 sidToState 把错误的 eyeOn/type 写给刚刚被恢复的节点。
-      for (const node of flattenNodes(data.layers)) {
+      for (const node of flattenNodes(normalized.layers)) {
         newLayerStates[node.id] =
           s.layerStates[node.id] ??
           { eyeOn: node.visible ?? true, type: "", selected: false };
@@ -484,7 +493,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
           if (st) sidToState.set(node.psdSid, st);
         }
       }
-      for (const node of flattenNodes(data.layers)) {
+      for (const node of flattenNodes(normalized.layers)) {
         const bySid = node.psdSid != null ? sidToState.get(node.psdSid) : undefined;
         const byId = s.layerStates[node.id];
         newLayerStates[node.id] =
@@ -496,7 +505,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
     if (isUndo) {
       // undo 回流：只同步数据，不再入栈
       set({
-        psdData: data,
+        psdData: normalized,
         layerStates: newLayerStates,
         pendingDeleteState: null,
         structuralLoading: false,
@@ -510,7 +519,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
         hasPsdChange: true,
       };
       set((cur) => ({
-        psdData: data,
+        psdData: normalized,
         layerStates: newLayerStates,
         pendingDeleteState: null,
         structuralLoading: false,
@@ -521,7 +530,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
       // 前端 history 被 slice(-MAX_HISTORY) 裁剪时，旧的 hasPsdChange 步骤会被丢弃，
       // 后端对应的快照就成了废内存——在此同步裁剪。
       const psdSteps = get().history.filter((h) => h.hasPsdChange).length;
-      void window.pywebview?.api.psd_trim_history(psdSteps).catch(() => {});
+      window.pywebview?.api.psd_trim_history(psdSteps).catch(() => {});
     }
     _skipHistory = false;
   },

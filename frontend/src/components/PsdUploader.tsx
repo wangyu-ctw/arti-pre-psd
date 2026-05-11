@@ -150,7 +150,7 @@ export function PsdUploader() {
         setPreprocessError(String(e));
         setStage("failure");
       } finally {
-        void api.focus_app();
+        api.focus_app();
       }
     } catch (e) {
       setPreprocessError(String(e));
@@ -247,11 +247,11 @@ export function PsdUploader() {
           return (
             <>
               <Tooltip title="确保所有的psd文件处理完成再打开">
-                <Button key="open" type="link" size="small" onClick={() => void handleOpenInPs(item)}>
+                <Button key="open" type="link" size="small" onClick={() => handleOpenInPs(item)}>
                   打开
                 </Button>
               </Tooltip>
-              <Button key="view" type="link" size="small" onClick={() => void handleViewResult(item)}>
+              <Button key="view" type="link" size="small" onClick={() => handleViewResult(item)}>
                 标注
               </Button>
             </>
@@ -281,7 +281,7 @@ export function PsdUploader() {
           title="未检测到 Photoshop"
           subTitle="请选择本机已安装的 Photoshop 应用，选定后会自动启动并记住路径，下次启动直接用。"
           extra={[
-            <Button key="pick" type="primary" onClick={() => void handlePickPs()}>
+            <Button key="pick" type="primary" onClick={() => handlePickPs()}>
               选择 Photoshop 应用
             </Button>,
           ]}
@@ -322,7 +322,7 @@ export function PsdUploader() {
               <Button key="reset" onClick={() => resetPreprocess(psStatus)}>
                 返回
               </Button>,
-              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>
+              <Button key="process" type="primary" onClick={() => handlePickPsdAndProcessQueue(true)}>
                 再处理一批
               </Button>,
             ]}
@@ -342,7 +342,7 @@ export function PsdUploader() {
               <Button key="reset" onClick={() => resetPreprocess(psStatus)}>
                 返回
               </Button>,
-              <Button key="process" type="primary" onClick={() => void handlePickPsdAndProcessQueue(true)}>
+              <Button key="process" type="primary" onClick={() => handlePickPsdAndProcessQueue(true)}>
                 再处理一批
               </Button>,
             ]}
@@ -375,13 +375,13 @@ export function PsdUploader() {
   }
 
   return (
-    <div className="psu-drop-area" onClick={() => void handlePickPsdAndProcessQueue()}>
+    <div className="psu-drop-area" onClick={() => handlePickPsdAndProcessQueue()}>
       <div className="psu-drop-inner">
         <InboxOutlined className="psu-drop-icon" />
-        <div className="psu-drop-title">点击选择多个 PSD 文件（串行排队处理）</div>
+        <div className="psu-drop-title">点击选择多个 PSD 文件</div>
         <div className="psu-drop-sub">
-          仅支持 .psd / .psb；失败不会阻塞后续文件
-          <p className="psu-drop-warning">*执行前请确保你的ps里没有正在编辑的文件</p>
+          仅支持 .psd / .psb；
+          <span className="psu-drop-warning">执行前请确保你的ps里没有正在编辑的文件</span>
         </div>
       </div>
     </div>

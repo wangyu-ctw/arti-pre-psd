@@ -1,14 +1,19 @@
 import {
   CaretDownOutlined,
   CaretRightOutlined,
+  DeleteOutlined,
+  DownOutlined,
   EyeFilled,
   EyeInvisibleFilled,
   FolderOpenFilled,
+  GroupOutlined,
+  LeftOutlined,
+  RightOutlined,
   XFilled,
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
-import { Dropdown, Flex, Input, Select, Spin, message } from "antd";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Button, Dropdown, Flex, Input, Select, Spin, Tooltip, message } from "antd";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CanvasSelectMode } from "../store/annotatorStore";
 import type { PsdLayerNode } from "../pywebview";
 import { getApi } from "../api";
@@ -75,15 +80,19 @@ const LayerNode = React.memo(function LayerNode({
   node,
   depth,
   nodeRefs,
+  collapsedIds,
+  setCollapsedIds,
 }: {
   node: PsdLayerNode;
   depth: number;
   nodeRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
+  collapsedIds: Set<string>;
+  setCollapsedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
   // 精确订阅：只有本节点的 state 改变才触发重渲染
   const state = useAnnotatorStore((s) => s.layerStates[node.id]) ?? DEFAULT_STATE;
 
-  const [expanded, setExpanded] = useState(true);
+  const expanded = !collapsedIds.has(node.id);
   const disabled = !state.eyeOn;
 
   const className = [
@@ -99,12 +108,6 @@ const LayerNode = React.memo(function LayerNode({
     const store = () => useAnnotatorStore.getState();
     if (node.isGroup) {
       return [
-        {
-          key: "merge-to-layer",
-          label: "合并选中的节点为一个图层",
-          onClick: () => void execMergeToLayer(),
-        },
-        { type: "divider" as const },
         {
           key: "mark-all",
           label: "将此图层组全部标记为",
@@ -122,45 +125,41 @@ const LayerNode = React.memo(function LayerNode({
         {
           key: "merge",
           label: "合并为一个图层",
-          onClick: () => {
-            void (async () => {
-              try {
-                useAnnotatorStore.setState({ structuralLoading: true });
-                const api = await getApi();
-                const r = await api.psd_merge_group(node.id);
-                if (!r.ok || !r.data) {
-                  useAnnotatorStore.setState({ structuralLoading: false });
-                  message.error(r.error ?? "合并失败");
-                  return;
-                }
-                store().updateFromPsdOp(r.data);
-              } catch (e) {
+          onClick: async () => {
+            try {
+              useAnnotatorStore.setState({ structuralLoading: true });
+              const api = await getApi();
+              const r = await api.psd_merge_group(node.id);
+              if (!r.ok || !r.data) {
                 useAnnotatorStore.setState({ structuralLoading: false });
-                message.error(String(e));
+                message.error(r.error ?? "合并失败");
+                return;
               }
-            })();
+              store().updateFromPsdOp(r.data);
+            } catch (e) {
+              useAnnotatorStore.setState({ structuralLoading: false });
+              message.error(String(e));
+            }
           },
         },
         {
           key: "ungroup",
           label: "解散并将子图层上移一级",
-          onClick: () => {
-            void (async () => {
-              try {
-                useAnnotatorStore.setState({ structuralLoading: true });
-                const api = await getApi();
-                const r = await api.psd_ungroup([node.id]);
-                if (!r.ok || !r.data) {
-                  useAnnotatorStore.setState({ structuralLoading: false });
-                  message.error(r.error ?? "解散失败");
-                  return;
-                }
-                store().updateFromPsdOp(r.data);
-              } catch (e) {
+          onClick: async () => {
+            try {
+              useAnnotatorStore.setState({ structuralLoading: true });
+              const api = await getApi();
+              const r = await api.psd_ungroup([node.id]);
+              if (!r.ok || !r.data) {
                 useAnnotatorStore.setState({ structuralLoading: false });
-                message.error(String(e));
+                message.error(r.error ?? "解散失败");
+                return;
               }
-            })();
+              store().updateFromPsdOp(r.data);
+            } catch (e) {
+              useAnnotatorStore.setState({ structuralLoading: false });
+              message.error(String(e));
+            }
           },
         },
         { type: "divider" as const },
@@ -173,12 +172,6 @@ const LayerNode = React.memo(function LayerNode({
       ];
     }
     return [
-      {
-        key: "merge-to-layer",
-        label: "合并选中的节点为一个图层",
-        onClick: () => void execMergeToLayer(),
-      },
-      { type: "divider" as const },
       {
         key: "delete",
         label: "删除此图层",
@@ -197,7 +190,7 @@ const LayerNode = React.memo(function LayerNode({
         if (!disabled) useAnnotatorStore.getState().setHovered(node.id);
         _hoveredSid = node.psdSid ?? null;
         if (e.altKey && node.psdSid != null) {
-          void requestLayerPreview(node.psdSid);
+          requestLayerPreview(node.psdSid);
         }
       }}
       onMouseLeave={() => {
@@ -218,7 +211,18 @@ const LayerNode = React.memo(function LayerNode({
             {node.isGroup && (
               <span
                 className="layer-node__caret"
-                onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCollapsedIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(node.id)) {
+                      next.delete(node.id);
+                    } else {
+                      next.add(node.id);
+                    }
+                    return next;
+                  });
+                }}
               >
                 {expanded ? <CaretDownOutlined /> : <CaretRightOutlined />}
               </span>
@@ -305,7 +309,13 @@ const LayerNode = React.memo(function LayerNode({
     </div>
     </Dropdown>
     {node.isGroup && node.children && node.children.length > 0 && expanded && (
-      <LayerTree nodes={node.children} depth={depth + 1} nodeRefs={nodeRefs} />
+      <LayerTree
+        nodes={node.children}
+        depth={depth + 1}
+        nodeRefs={nodeRefs}
+        collapsedIds={collapsedIds}
+        setCollapsedIds={setCollapsedIds}
+      />
     )}
   </>
   );
@@ -316,15 +326,26 @@ const LayerTree = React.memo(function LayerTree({
   nodes,
   depth,
   nodeRefs,
+  collapsedIds,
+  setCollapsedIds,
 }: {
   nodes: PsdLayerNode[];
   depth: number;
   nodeRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
+  collapsedIds: Set<string>;
+  setCollapsedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
   return (
     <>
       {nodes.map((node) => (
-        <LayerNode key={node.id} node={node} depth={depth} nodeRefs={nodeRefs} />
+        <LayerNode
+          key={node.id}
+          node={node}
+          depth={depth}
+          nodeRefs={nodeRefs}
+          collapsedIds={collapsedIds}
+          setCollapsedIds={setCollapsedIds}
+        />
       ))}
     </>
   );
@@ -343,17 +364,100 @@ export function PsdLayerPanel() {
   const psdData = useAnnotatorStore((s) => s.psdData);
   const canvasSelectMode = useAnnotatorStore((s) => s.canvasSelectMode);
   const structuralLoading = useAnnotatorStore((s) => s.structuralLoading);
+  const layerStates = useAnnotatorStore((s) => s.layerStates);
+  const scrollToId = useAnnotatorStore((s) => s.scrollToId);
   const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pendingScrollId = useRef<string | null>(null);
+  const [navIndex, setNavIndex] = useState(0);
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
 
-  // scrollToId 用 store.subscribe 处理，完全绕开 React render 循环
-  useEffect(() => {
-    const unsub = useAnnotatorStore.subscribe((state, prev) => {
-      if (state.scrollToId !== prev.scrollToId && state.scrollToId) {
-        nodeRefs.current[state.scrollToId]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const ancestorIdsByNodeId = useMemo(() => {
+    const result = new Map<string, string[]>();
+    if (!psdData) return result;
+    const walk = (nodes: PsdLayerNode[], ancestors: string[]) => {
+      for (const n of nodes) {
+        result.set(n.id, ancestors);
+        if (n.children) walk(n.children, [...ancestors, n.id]);
       }
+    };
+    walk(psdData.layers, []);
+    return result;
+  }, [psdData]);
+
+  // 按树遍历顺序收集已选节点 id
+  const selectedOrderedIds = useMemo(() => {
+    if (!psdData) return [];
+    const result: string[] = [];
+    const walk = (nodes: PsdLayerNode[]) => {
+      for (const n of nodes) {
+        if (layerStates[n.id]?.selected) result.push(n.id);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(psdData.layers);
+    return result;
+  }, [psdData, layerStates]);
+
+  // 选中集合变化时重置导航指针
+  const selectedKey = selectedOrderedIds.join(",");
+  useEffect(() => {
+    setNavIndex(0);
+  }, [selectedKey]);
+
+  // 外部选中隐藏节点时，先展开它的祖先组，再交给滚动逻辑定位到节点行。
+  useLayoutEffect(() => {
+    if (!scrollToId) return;
+    pendingScrollId.current = scrollToId;
+    const ancestorIds = ancestorIdsByNodeId.get(scrollToId);
+    if (!ancestorIds || ancestorIds.length === 0) return;
+    setCollapsedIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of ancestorIds) {
+        if (next.delete(id)) changed = true;
+      }
+      return changed ? next : prev;
     });
-    return unsub;
-  }, []);
+  }, [ancestorIdsByNodeId, scrollToId]);
+
+  function navTo(idx: number) {
+    if (selectedOrderedIds.length === 0) return;
+    const wrapped = ((idx % selectedOrderedIds.length) + selectedOrderedIds.length) % selectedOrderedIds.length;
+    setNavIndex(wrapped);
+    useAnnotatorStore.getState().setScrollToId(selectedOrderedIds[wrapped]);
+  }
+
+  const selTotal = selectedOrderedIds.length;
+
+  const markAsItems = useMemo<MenuProps["items"]>(
+    () =>
+      LAYER_TYPE_OPTIONS.map((o) => ({
+        key: `mark-${o.value}`,
+        label: (
+          <span>
+            <XFilled style={{ color: o.color, marginRight: 6 }} />
+            {o.label}
+          </span>
+        ),
+        onClick: () => {
+          const store = useAnnotatorStore.getState();
+          const selectedIds = Object.entries(store.layerStates)
+            .filter(([, s]) => s.selected)
+            .map(([id]) => id);
+          for (const id of selectedIds) store.setTypeForSubtree(id, o.value);
+        },
+      })),
+    [],
+  );
+
+  useEffect(() => {
+    const targetId = pendingScrollId.current;
+    if (!targetId) return;
+    requestAnimationFrame(() => {
+      nodeRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      if (pendingScrollId.current === targetId) pendingScrollId.current = null;
+    });
+  }, [collapsedIds, scrollToId]);
 
   // Alt 键全局监听：
   //   keydown Alt → 若当前有 hover 节点则触发预览（适应"先 hover 再按 Alt"场景）
@@ -363,7 +467,7 @@ export function PsdLayerPanel() {
       if (e.key !== "Alt") return;
       e.preventDefault(); // 防止浏览器默认 alt 行为（如聚焦菜单）
       // _hoveredSid 不受 eyeOn 限制，eyeOn=false 的节点同样可预览
-      if (_hoveredSid != null) void requestLayerPreview(_hoveredSid);
+      if (_hoveredSid != null) requestLayerPreview(_hoveredSid);
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.key !== "Alt") return;
@@ -408,19 +512,75 @@ export function PsdLayerPanel() {
             readOnly
           />      
         </Flex>
-        <Flex align="center" gap={8} className="plp-header-select">
-          <span className="plp-header-label">画布点选</span>
-          <Select
-            size="small"
-            value={canvasSelectMode}
-            options={CANVAS_SELECT_OPTIONS}
-            onChange={(v) => useAnnotatorStore.getState().setCanvasSelectMode(v)}
-            popupMatchSelectWidth={false}
-          />
+        <Flex align="center" justify="space-between" className="plp-header-select">
+          <div>
+            <span className="plp-header-label">画布点选</span>
+            <Select
+              size="small"
+              value={canvasSelectMode}
+              options={CANVAS_SELECT_OPTIONS}
+              onChange={(v) => useAnnotatorStore.getState().setCanvasSelectMode(v)}
+              popupMatchSelectWidth={false}
+            />
+          </div>
+          {selTotal > 1 && (
+            <Flex align="center" gap={8} className="plp-nav">
+              <Button
+                icon={<LeftOutlined />}
+                variant="text"
+                size="small"
+                onClick={() => navTo(navIndex - 1)}
+              />
+              <span className="plp-nav__counter">第 {navIndex + 1} / {selTotal} 已选择</span>
+              <Button
+                icon={<RightOutlined />}
+                variant="text"
+                size="small"
+                onClick={() => navTo(navIndex + 1)}
+              />
+              <label className="plp-nav__label">批量操作:</label>
+              <Tooltip title={<>删除（<kbd>Del</kbd>）</>}>
+                <Button
+                  icon={<DeleteOutlined />}
+                  variant="text"
+                  color="danger"
+                  size="small"
+                  onClick={() => {
+                    const { layerStates } = useAnnotatorStore.getState();
+                    const selectedIds = new Set(
+                      Object.entries(layerStates).filter(([, s]) => s.selected).map(([id]) => id),
+                    );
+                    if (selectedIds.size > 0) useAnnotatorStore.getState().requestDelete(selectedIds);
+                  }}
+                />
+              </Tooltip>
+              <Tooltip title={<>合并（<kbd>Cmd</kbd>+<kbd>G</kbd>）</>}>
+                <Button
+                  icon={<GroupOutlined />}
+                  variant="text"
+                  color="primary"
+                  size="small"
+                  onClick={() => execMergeToLayer()}
+                />
+              </Tooltip>
+              <Dropdown menu={{ items: markAsItems }} trigger={["hover"]}>
+                <Button size="small">
+                  标记为
+                  <DownOutlined />
+                </Button>
+              </Dropdown>
+            </Flex>
+          )}
         </Flex>
       </div>
       <div className="plp-tree-scroll">
-        <LayerTree nodes={psdData.layers} depth={0} nodeRefs={nodeRefs} />
+        <LayerTree
+          nodes={psdData.layers}
+          depth={0}
+          nodeRefs={nodeRefs}
+          collapsedIds={collapsedIds}
+          setCollapsedIds={setCollapsedIds}
+        />
         {structuralLoading && (
           <div className="plp-loading-overlay">
             <Spin tip="处理中…" size="large" />

@@ -315,6 +315,48 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def save_zip(self, csv_content: str, suggested_name: str) -> dict[str, Any]:
+        """弹原生 Save 对话框，将 CSV 和当前 PSD 打包为 ZIP 文件保存。
+        ZIP 内包含 {suggested_name}.csv 和 {suggested_name}.psd 两个文件。
+        """
+        try:
+            import io as _io
+            import zipfile
+
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+
+            saved = win.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=suggested_name + ".zip",
+                file_types=("ZIP files (*.zip)", "All files (*.*)"),
+            )
+            if not saved:
+                return {"ok": False, "error": "用户取消"}
+
+            save_path = saved if isinstance(saved, str) else saved[0]
+            base_name = Path(save_path).stem  # 去掉 .zip，用作内部文件名
+
+            psd_bytes = session.get_psd_bytes()
+            csv_bytes = csv_content.encode("utf-8-sig")
+
+            zip_buf = _io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(base_name + ".csv", csv_bytes)
+                zf.writestr(base_name + ".psd", psd_bytes)
+
+            Path(save_path).write_bytes(zip_buf.getvalue())
+            return {"ok": True, "data": {"path": save_path}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def close_psd_session(self) -> dict[str, Any]:
         """释放内存中的 PSD 会话，使 PSDImage 对象可被 GC 回收。
         在前端关闭/切换标注文件时调用。

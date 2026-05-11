@@ -25,7 +25,7 @@ backend/psExtendScript/
   1.  ungroupArtboards.jsx            # 取消所有画板编组，解锁后再取消，完成后清空选中
   2.  Delete All Empty Layers.jsx     # 删空图层 + 删所有"有效不可见"图层（fork 增强）
   3.  unlockAllLayersAndGroups.jsx    # 解锁全部图层/组；解锁前已隐藏的图层直接删除
-  4.  Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式（PS 自带）
+  4.  Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式，并栅格化智能对象
   5.  flattenGroupsWithEffects.jsx    # 自身带 effects 的 LayerSet → 合并成单层
   6.  Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（PS 自带）
   7.  flattenClippingMasks.jsx        # Stamp Visible 策略：合并所有剪切蒙版组
@@ -65,7 +65,7 @@ arti-pre-psd/
 │   │   ├── ungroupArtboards.jsx              # 取消全部画板编组（步骤 1）
 │   │   ├── Delete All Empty Layers.jsx     # 删空图层/隐藏图层（步骤 2 & 2b）
 │   │   ├── unlockAllLayersAndGroups.jsx    # 解锁全部图层/组（步骤 3）
-│   │   ├── Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式（步骤 4）
+│   │   ├── Flatten All Layer Effects.jsx   # 栅格化图层样式和智能对象（步骤 4）
 │   │   ├── flattenGroupsWithEffects.jsx    # 合并自身带 effects 的图层组（步骤 5）
 │   │   ├── Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（步骤 6）
 │   │   ├── flattenClippingMasks.jsx        # Stamp Visible 合并剪切蒙版组（步骤 7）

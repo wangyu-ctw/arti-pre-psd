@@ -1,11 +1,14 @@
 import {
+  CloseOutlined,
+  EllipsisOutlined,
   ExportOutlined,
+  FilePptFilled,
   FolderOpenOutlined,
-
-  SaveOutlined,
   SelectOutlined,
+  TableOutlined,
 } from "@ant-design/icons";
-import { App as AntApp, Button, Flex, Input, Modal, Spin, Splitter } from "antd";
+import { App as AntApp, Button, Dropdown, Flex, Input, Modal, Space, Spin, Splitter } from "antd";
+import type { MenuProps } from "antd";
 import { useEffect, useState } from "react";
 import { getApi } from "../api";
 import { useAppStore } from "../store/appStore";
@@ -56,7 +59,7 @@ export function AnnotatorWorkspace() {
     if (!annotatingFile.trim()) {
       clearAll();
       // 释放 Python 端内存中的 PSD 会话（fire-and-forget，失败不影响 UI）
-      void getApi().then((api) => api.close_psd_session()).catch(() => {});
+      getApi().then((api) => api.close_psd_session()).catch(() => {});
       return;
     }
 
@@ -92,7 +95,7 @@ export function AnnotatorWorkspace() {
   // ── 键盘 Delete：二次确认后删除选中节点 ──────────────────────────────────
 
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
+    async function handleKeyDown(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
@@ -108,22 +111,20 @@ export function AnnotatorWorkspace() {
           message.info("请先选中 2 个以上节点再合并");
           return;
         }
-        void (async () => {
-          try {
-            useAnnotatorStore.setState({ structuralLoading: true });
-            const api = await getApi();
-            const r = await api.psd_merge_to_layer(selectedIds);
-            if (!r.ok || !r.data) {
-              useAnnotatorStore.setState({ structuralLoading: false });
-              message.error(r.error ?? "合并失败");
-              return;
-            }
-            useAnnotatorStore.getState().updateFromPsdOp(r.data);
-          } catch (err) {
+        try {
+          useAnnotatorStore.setState({ structuralLoading: true });
+          const api = await getApi();
+          const r = await api.psd_merge_to_layer(selectedIds);
+          if (!r.ok || !r.data) {
             useAnnotatorStore.setState({ structuralLoading: false });
-            message.error(String(err));
+            message.error(r.error ?? "合并失败");
+            return;
           }
-        })();
+          useAnnotatorStore.getState().updateFromPsdOp(r.data);
+        } catch (err) {
+          useAnnotatorStore.setState({ structuralLoading: false });
+          message.error(String(err));
+        }
         return;
       }
 
@@ -140,23 +141,21 @@ export function AnnotatorWorkspace() {
         }
 
         // 该步涉及 PSD 结构性改动，同步撤销 Python 端
-        void (async () => {
-          try {
-            useAnnotatorStore.setState({ structuralLoading: true });
-            const api = await getApi();
-            const r = await api.psd_undo();
-            if (!r.ok || !r.data) {
-              useAnnotatorStore.setState({ structuralLoading: false });
-              message.error(r.error ?? "PSD 撤销失败");
-              return;
-            }
-            useAnnotatorStore.getState().updateFromPsdOp(r.data, true);
-            message.info(`已撤销（还可回退 ${history.length - 1} 步）`, 1.5);
-          } catch (err) {
+        try {
+          useAnnotatorStore.setState({ structuralLoading: true });
+          const api = await getApi();
+          const r = await api.psd_undo();
+          if (!r.ok || !r.data) {
             useAnnotatorStore.setState({ structuralLoading: false });
-            message.error(String(err));
+            message.error(r.error ?? "PSD 撤销失败");
+            return;
           }
-        })();
+          useAnnotatorStore.getState().updateFromPsdOp(r.data, true);
+          message.info(`已撤销（还可回退 ${history.length - 1} 步）`, 1.5);
+        } catch (err) {
+          useAnnotatorStore.setState({ structuralLoading: false });
+          message.error(String(err));
+        }
         return;
       }
 
@@ -238,8 +237,40 @@ export function AnnotatorWorkspace() {
   }
 
 
+  function showSavedMessage(filePath: string) {
+    const dir = filePath.replace(/[/\\][^/\\]+$/, "") || filePath;
+    const key = `saved-${Date.now()}`;
+    message.success({
+      key,
+      content: (
+        <span>
+          已保存
+          <Button
+            type="link"
+            size="small"
+            style={{ paddingLeft: 4 }}
+            onClick={() => {
+              void getApi().then((api) => api.open_external(`file://${dir}`));
+            }}
+          >
+            查看文件夹
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            style={{ marginLeft: 4, color: "#00000073" }}
+            onClick={() => message.destroy(key)}
+          />
+        </span>
+      ),
+      duration: 10,
+    });
+  }
+
   /** 弹原生 Save 对话框，将当前 PSD 状态写出为新文件。 */
   async function handleSavePsd() {
+    console.log("[handleSavePsd] psdData (frontend store):", useAnnotatorStore.getState().psdData);
     const baseName = annotatingFile.split(/[\\/]/).pop() ?? "output";
     const suggested = baseName.replace(/\.psd$/i, "") + "_annotated.psd";
     try {
@@ -249,17 +280,15 @@ export function AnnotatorWorkspace() {
         if (r.error !== "用户取消") message.error(r.error ?? "保存失败");
         return;
       }
-      message.success(`已保存：${r.data?.path ?? ""}`);
+      showSavedMessage(r.data?.path ?? "");
     } catch (e) {
       message.error(String(e));
     }
   }
 
-  async function handleDownloadCsv() {
-    // 直接读快照，不订阅 store（避免触发重渲染）
+  function buildCsvContent(): string | null {
     const { psdData: pd, layerStates } = useAnnotatorStore.getState();
-    if (!pd) return;
-
+    if (!pd) return null;
     const rows: string[] = [];
     for (const node of flattenNodes(pd.layers)) {
       const state = layerStates[node.id];
@@ -268,21 +297,43 @@ export function AnnotatorWorkspace() {
       const escapedInfo = `"${layerInfo.replace(/"/g, '""')}"`;
       rows.push(`${state.type},${node.x},${node.y},${node.width},${node.height},${escapedInfo}`);
     }
+    if (rows.length === 0) return "";
+    return ["class_label,x,y,w,h,psd_layer_info", ...rows].join("\n");
+  }
 
-    if (rows.length === 0) {
+  async function handleExportZip() {
+    const content = buildCsvContent();
+    if (content === null) return;
+    if (content === "") {
       message.warning("暂无已标注的图层，请先为图层选择类型");
       return;
     }
+    const baseName = annotatingFile.split(/[\\/]/).pop() ?? "export";
+    const suggested = baseName.replace(/\.psd$/i, "") + "_annotated";
+    try {
+      const api = await getApi();
+      const r = await api.save_zip(content, suggested);
+      if (!r.ok && r.error !== "用户取消") message.error(r.error ?? "保存失败");
+      else if (r.ok) showSavedMessage(r.data?.path ?? "");
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
 
-    const content = ["class_label,x,y,w,h,psd_layer_info", ...rows].join("\n");
+  async function handleDownloadCsv() {
+    const content = buildCsvContent();
+    if (content === null) return;
+    if (content === "") {
+      message.warning("暂无已标注的图层，请先为图层选择类型");
+      return;
+    }
     const baseName = annotatingFile.split(/[\\/]/).pop() ?? "export";
     const filename = baseName.replace(/\.psd$/i, "") + ".csv";
-
-    // pywebview 环境下 blob URL + a.click() 会导航页面，必须走 Python 原生 Save 对话框
     try {
       const api = await getApi();
       const r = await api.save_csv(content, filename);
       if (!r.ok && r.error !== "用户取消") message.error(r.error ?? "保存失败");
+      else if (r.ok) showSavedMessage(r.data?.path ?? "");
     } catch (e) {
       message.error(String(e));
     }
@@ -305,33 +356,48 @@ export function AnnotatorWorkspace() {
           <Button
             type="primary"
             icon={<SelectOutlined />}
-            onClick={() => void handlePickFile()}
+            onClick={() => handlePickFile()}
           >
             选择
           </Button>
           <Button
             icon={<FolderOpenOutlined />}
             disabled={!annotatingFile.trim()}
-            onClick={() => void handleOpenInPs()}
+            onClick={() => handleOpenInPs()}
           >
             用 PS 打开
           </Button>
-          <Button
-            icon={<ExportOutlined />}
-            onClick={() => void handleDownloadCsv()}
-            disabled={!annotatingFile.trim() || !psdData}
-          >
-            导出 CSV
-          </Button>
-
-          <Button
-            icon={<SaveOutlined />}
-            onClick={() => void handleSavePsd()}
-            disabled={!annotatingFile.trim() || !psdData}
-            title="将当前 PSD 结构另存为新文件"
-          >
-            保存 PSD
-          </Button>
+          <Space.Compact>
+            <Button
+              icon={<ExportOutlined />}
+              disabled={!annotatingFile.trim() || !psdData}
+              onClick={() => handleExportZip()}
+            >
+              导出
+            </Button>
+            <Dropdown
+              disabled={!annotatingFile.trim() || !psdData}
+              placement="bottomRight"
+              menu={{
+                items: [
+                  {
+                    key: "csv",
+                    icon: <TableOutlined />,
+                    label: "导出 CSV",
+                    onClick: () => void handleDownloadCsv(),
+                  },
+                  {
+                    key: "psd",
+                    icon: <FilePptFilled />,
+                    label: "导出 PSD",
+                    onClick: () => void handleSavePsd(),
+                  },
+                ] satisfies MenuProps["items"],
+              }}
+            >
+              <Button icon={<EllipsisOutlined />} disabled={!annotatingFile.trim() || !psdData} />
+            </Dropdown>
+          </Space.Compact>
         </Flex>
       </div>
 
@@ -392,13 +458,13 @@ export function AnnotatorWorkspace() {
               <Button onClick={() => useAnnotatorStore.getState().clearPendingDelete()}>
                 取消
               </Button>
-              <Button onClick={() => void handleDeleteConfirm("ungroup")}>
+              <Button onClick={() => handleDeleteConfirm("ungroup")}>
                 保留内容，将子节点上移一级
               </Button>
               <Button
                 danger
                 type="primary"
-                onClick={() => void handleDeleteConfirm("delete")}
+                onClick={() => handleDeleteConfirm("delete")}
               >
                 删除整组，并删除子节点
               </Button>
@@ -414,7 +480,7 @@ export function AnnotatorWorkspace() {
               <Button
                 danger
                 type="primary"
-                onClick={() => void handleDeleteConfirm("delete")}
+                onClick={() => handleDeleteConfirm("delete")}
               >
                 确认删除
               </Button>
