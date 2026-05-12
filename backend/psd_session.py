@@ -4,7 +4,7 @@ PSD 内存会话管理器（步骤文件方案）。
 核心思路：
   每次结构操作分三步：
     1. 把当前状态（树快照 + DFS sids + 当前步骤文件路径）压栈
-    2. 直接修改 self._psd._record（C 扩展读 _record，composite/save 均可感知）
+    2. 修改 self._psd 的结构数据（C 扩展读 _record，composite/save 均可感知）
     3. 把修改后的 _psd 保存为新步骤文件（系统临时目录），更新 _current_psd_path
 
   Undo：从历史栈弹出上一个状态 → 删除当前步骤文件 → 重开上一步骤文件 → 重建 _layer_map
@@ -64,14 +64,6 @@ def close() -> None:
 # ── 内部纯函数（字典树操作）───────────────────────────────────────────────
 
 
-def _collect_descendant_sids(node: dict[str, Any]) -> set[int]:
-    sids: set[int] = set()
-    for child in node.get("children", []):
-        sids.add(child["_sid"])
-        sids.update(_collect_descendant_sids(child))
-    return sids
-
-
 def _reindex_tree(nodes: list[dict[str, Any]], prefix: str) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for idx, node in enumerate(nodes):
@@ -100,21 +92,18 @@ def _to_public(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _remove_from_tree(
     nodes: list[dict[str, Any]], ids_set: set[str]
-) -> tuple[list[dict[str, Any]], set[int]]:
+) -> list[dict[str, Any]]:
     new_tree: list[dict[str, Any]] = []
-    removed_sids: set[int] = set()
     for node in nodes:
-        if node["id"] in ids_set:
-            removed_sids.add(node["_sid"])
-            removed_sids.update(_collect_descendant_sids(node))
-        else:
+        if node["id"] not in ids_set:
             new_node = dict(node)
             if "children" in new_node:
-                sub_tree, sub_sids = _remove_from_tree(new_node["children"], ids_set)
-                new_node = {**new_node, "children": sub_tree}
-                removed_sids.update(sub_sids)
+                new_node = {
+                    **new_node,
+                    "children": _remove_from_tree(new_node["children"], ids_set),
+                }
             new_tree.append(new_node)
-    return new_tree, removed_sids
+    return new_tree
 
 
 def _ungroup_in_tree(
@@ -553,83 +542,6 @@ class PsdSession:
             logger.error("_merge_group_in_record: 替换组 %r 为像素层失败: %s", getattr(group_layer, "name", "?"), exc)
             return False
 
-    def _merge_nodes_in_record(
-        self,
-        source_layers: list[Any],
-        pil_img: Any,
-        name: str,
-        x1: int,
-        y1: int,
-    ) -> bool:
-        """在 _record 中将多个源图层替换为单一像素层。"""
-        li = self._get_layer_info()
-        if li is None:
-            return False
-        records = li.layer_records
-        channels = self._get_channel_data(li)
-        if channels is None:
-            logger.error("_merge_nodes_in_record: 无法获取 channel data")
-            return False
-        try:
-            if pil_img.mode != "RGBA":
-                pil_img = pil_img.convert("RGBA")
-            w, h = pil_img.size
-            mini_rec, mini_chan = self._make_pixel_record_and_channels(
-                pil_img,
-                name or "Merged Layer",
-                x1,
-                y1,
-            )
-            mini_rec.bottom = y1 + h
-            mini_rec.right = x1 + w
-
-            # 收集所有需要删除的 record 索引
-            indices_to_remove: set[int] = set()
-            for lyr in source_layers:
-                if isinstance(lyr, Group):
-                    span = self._find_group_span(lyr)
-                    if span:
-                        b, h_idx = span
-                        indices_to_remove.update(range(b, h_idx + 1))
-                    else:
-                        logger.error("_merge_nodes_in_record: 找不到组 %r 的区间", getattr(lyr, "name", "?"))
-                        return False
-                else:
-                    layer_rec = getattr(lyr, "_record", None)
-                    if layer_rec is None:
-                        logger.error("_merge_nodes_in_record: 图层 %r 没有 _record", getattr(lyr, "name", "?"))
-                        return False
-                    found = False
-                    for i, rec in enumerate(records):
-                        if rec is layer_rec:
-                            indices_to_remove.add(i)
-                            found = True
-                            break
-                    if not found:
-                        logger.error("_merge_nodes_in_record: 在 layer_records 中找不到图层 %r 的记录", getattr(lyr, "name", "?"))
-                        return False
-
-            if not indices_to_remove:
-                return False
-
-            # 计算插入位置：最高索引源图层删除后的槽位
-            max_src_idx = max(indices_to_remove)
-            n_below = sum(1 for i in indices_to_remove if i < max_src_idx)
-            insert_idx = max_src_idx - n_below
-
-            for i in sorted(indices_to_remove, reverse=True):
-                records.pop(i)
-                if i < len(channels):
-                    channels.pop(i)
-
-            records.insert(insert_idx, mini_rec)
-            channels.insert(insert_idx, mini_chan)
-            self._update_layer_count(li)
-            return True
-        except Exception as exc:
-            logger.error("_merge_nodes_in_record: 替换选中节点为像素层失败: %s", exc)
-            return False
-
     def _make_pixel_record_and_channels(
         self,
         pil_img: Any,
@@ -834,7 +746,7 @@ class PsdSession:
 
         collect_toplevel(self._current_tree)
 
-        new_tree, _ = _remove_from_tree(self._current_tree, ids_set)
+        new_tree = _remove_from_tree(self._current_tree, ids_set)
         self._current_tree = _reindex_tree(new_tree, "root")
 
         failed_sid: int | None = None
@@ -894,8 +806,6 @@ class PsdSession:
 
     def merge_group(self, node_id: str) -> dict[str, Any]:
         """将图层组合并为单一像素层：替换 _record 中的组区间 + 更新树 + 保存步骤文件。"""
-        from PIL import Image  # noqa: F401
-
         def find_by_id(nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
             for n in nodes:
                 if n["id"] == node_id:
@@ -1124,6 +1034,9 @@ class PsdSession:
             counter[safe] = n + 1
             return f"{safe}.png" if n == 0 else f"{safe}_{n}.png"
 
+        def _csv_field(val: str) -> str:
+            return '"' + val.replace('"', '""') + '"' if ("," in val or '"' in val) else val
+
         def _walk(nodes: list[dict[str, Any]]) -> None:
             for node in nodes:
                 if node.get("isGroup"):
@@ -1148,55 +1061,19 @@ class PsdSession:
                         logger.warning("build_export_package: 图层 %r 合成失败: %s", node.get("name"), exc)
                         filename = ""  # 合成失败时 layer_asset 留空
 
-                layer_info = json.dumps({"layer_name": node.get("name", "")}, ensure_ascii=False)
+                name = node.get("name", "")
+                layer_info = json.dumps({"layer_name": name}, ensure_ascii=False)
                 escaped_info = '"' + layer_info.replace('"', '""') + '"'
                 csv_rows.append(
-                    f"{layer_type},{node['x']},{node['y']},{node['width']},{node['height']},{escaped_info},{filename}"
+                    f"{_csv_field(name)},{node['x']},{node['y']},{node['width']},{node['height']},{layer_type},{escaped_info},{_csv_field(filename)}"
                 )
 
         _walk(self._current_tree)
 
         header = f"{self._psd.width},{self._psd.height}"
-        col_names = "class_label,x,y,w,h,psd_layer_info,layer_asset"
+        col_names = "layer_name,x,y,w,h,layer_type,psd_layer_info,layer_asset"
         csv_content = "\n".join([header, col_names] + csv_rows)
         return csv_content, slices
-
-    def get_all_layer_slices(self) -> list[tuple[str, bytes]]:
-        """合成所有叶子节点的 PNG 切片，返回 [(filename, png_bytes), ...] 列表。
-        跳过合成失败或内容为空的节点；重名节点自动加数字后缀。
-        """
-        import re
-
-        results: list[tuple[str, bytes]] = []
-        counter: dict[str, int] = {}
-
-        def _unique_name(raw: str) -> str:
-            safe = re.sub(r'[\\/*?:"<>|\x00-\x1f]', "_", raw).strip() or "layer"
-            n = counter.get(safe, 0)
-            counter[safe] = n + 1
-            return f"{safe}.png" if n == 0 else f"{safe}_{n}.png"
-
-        def _walk(nodes: list[dict[str, Any]]) -> None:
-            for node in nodes:
-                if node.get("isGroup"):
-                    _walk(node.get("children") or [])
-                    continue
-                layer = self._layer_map.get(node["_sid"])
-                if layer is None:
-                    continue
-                try:
-                    img = layer.composite()
-                except Exception as exc:
-                    logger.warning("get_all_layer_slices: 图层 %r 合成失败: %s", node.get("name"), exc)
-                    continue
-                if img is None:
-                    continue
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                results.append((_unique_name(node.get("name", "layer")), buf.getvalue()))
-
-        _walk(self._current_tree)
-        return results
 
     def get_psd_bytes(self) -> bytes:
         """将当前 PSD 状态序列化为字节流并返回（用于打包 ZIP 等内存操作）。"""

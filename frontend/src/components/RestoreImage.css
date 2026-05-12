@@ -1,0 +1,72 @@
+/* ── RestoreImage ────────────────────────────────────────────────── */
+
+.ri-splitter {
+  height: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+/* ── 左侧面板 ── */
+.ri-left {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ri-controls {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ri-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ri-label {
+  width: 88px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: #555;
+}
+
+.ri-path-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ri-row--actions {
+  justify-content: space-between;
+}
+
+.ri-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 右侧面板 ── */
+.ri-right {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: auto;
+  padding: 12px;
+}
+
+.ri-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+  background: #fff;
+}

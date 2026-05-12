@@ -15,7 +15,6 @@ from typing import Any, Optional
 from . import settings
 
 IS_MAC = platform.system() == "Darwin"
-IS_WIN = platform.system() == "Windows"
 
 # ExtendScript 脚本路径（按调用顺序）
 _SCRIPTS_DIR = Path(__file__).parent / "psExtendScript"
@@ -26,7 +25,6 @@ SCRIPT_FLATTEN_FX = _SCRIPTS_DIR / "Flatten All Layer Effects.jsx"
 SCRIPT_FLATTEN_GROUPS_WITH_FX = _SCRIPTS_DIR / "flattenGroupsWithEffects.jsx"
 SCRIPT_FLATTEN_MASKS = _SCRIPTS_DIR / "Flatten All Masks.jsx"
 SCRIPT_FLATTEN_CLIPPING_MASKS = _SCRIPTS_DIR / "flattenClippingMasks.jsx"
-SCRIPT_DELETE_PROBLEMATIC_CLIP = _SCRIPTS_DIR / "deleteProblematicClipLayers.jsx"
 SCRIPT_ORGANIZE_GROUPS = _SCRIPTS_DIR / "organizeLayerGroups.jsx"
 SCRIPT_UNIQUE_LAYER_NAMES = _SCRIPTS_DIR / "uniqueLayerNames.jsx"
 SCRIPT_TRIM_TO_CANVAS = _SCRIPTS_DIR / "trimLayersToCanvas.jsx"
@@ -40,9 +38,6 @@ SCRIPT_SAVE_AS_CLEAN = _SCRIPTS_DIR / "saveAsClean.jsx"
 #   - 不同 PS 版本 / 不同系统语言下 CFBundleName 可能再变。
 #   - 而 bundle id 自 Adobe 历史以来一直是 "com.adobe.Photoshop"。
 PS_BUNDLE_ID = "com.adobe.Photoshop"
-
-# PS 处理大文件偶尔很慢；超时给宽松一点（10min）
-_PROCESS_TIMEOUT_SEC = 600
 
 # 处理步骤列表：(显示名称, jsx脚本路径)
 _PROCESS_STEPS: list[tuple[str, Path]] = [

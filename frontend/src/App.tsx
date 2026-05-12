@@ -9,6 +9,7 @@ import { useMemo } from "react";
 import { getApi } from "./api";
 import { AnnotatorWorkspace } from "./components/AnnotatorWorkspace";
 import { PsdUploader } from "./components/PsdUploader";
+import { RestoreImage } from "./components/RestoreImage";
 import { useAppStore, selectPreprocessBadge } from "./store/appStore";
 
 const { Content, Footer } = Layout;
@@ -78,6 +79,15 @@ export default function App() {
               children: (
                 <div style={contentAreaStyle}>
                   <AnnotatorWorkspace />
+                </div>
+              ),
+            },
+            {
+              key: "restore",
+              label: "还原器",
+              children: (
+                <div style={contentAreaStyle}>
+                  <RestoreImage />
                 </div>
               ),
             },

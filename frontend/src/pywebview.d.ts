@@ -90,6 +90,24 @@ export interface PyApi {
   /** 弹原生 dialog 仅可选 .psd（不含 .psb）。 */
   pick_psd_only_file: () => Promise<BackendResult<PickPsdFilePayload>>;
 
+  /** 弹原生 dialog 选 .csv 文件，读取后返回文件内容字符串。 */
+  pick_and_read_csv: () => Promise<BackendResult<{ content: string; name: string }>>;
+
+  /** 弹原生 dialog 让用户选文件夹，返回路径。 */
+  pick_folder: () => Promise<BackendResult<{ path: string }>>;
+
+  /** 从指定文件夹读取图片列表，返回 {filename: base64} 字典。 */
+  read_images_from_folder: (
+    folder_path: string,
+    filenames: string[],
+  ) => Promise<BackendResult<Record<string, string>>>;
+
+  /** 将 canvas.toDataURL 的 base64 PNG 保存为文件（弹原生 Save 对话框）。 */
+  save_image_base64: (
+    data_url: string,
+    suggested_name: string,
+  ) => Promise<BackendResult<{ path: string }>>;
+
   /** 将本应用窗口置顶（PS 队列全部完成后再调，避免每个文件处理完都抢一次焦点）。 */
   focus_app: () => Promise<BackendResult<Record<string, never>>>;
 

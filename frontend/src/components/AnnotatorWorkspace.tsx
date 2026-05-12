@@ -1,5 +1,6 @@
 import {
   CloseOutlined,
+  DeliveredProcedureOutlined,
   EllipsisOutlined,
   ExportOutlined,
   FilePptFilled,
@@ -28,6 +29,39 @@ function flattenNodes(nodes: PsdLayerNode[]): PsdLayerNode[] {
   };
   walk(nodes);
   return result;
+}
+
+/** 将字段值转义为 CSV 安全格式（含逗号或引号时加外层引号）。 */
+function csvField(val: string): string {
+  return val.includes(",") || val.includes('"') ? `"${val.replace(/"/g, '""')}"` : val;
+}
+
+/** 生成与后端 _safe_filename 一致的 PNG 文件名（用计数器处理重名）。 */
+function safeFilename(name: string, counter: Record<string, number>): string {
+  const safe = name.replace(/[\\/*?:"<>|\x00-\x1f]/g, "_").trim() || "layer";
+  const n = counter[safe] ?? 0;
+  counter[safe] = n + 1;
+  return n === 0 ? `${safe}.png` : `${safe}_${n}.png`;
+}
+
+/** 解析单行 CSV，正确处理带引号字段内的逗号。 */
+function parseCsvLine(line: string): string[] {
+  const cols: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === "," && !inQ) {
+      cols.push(cur); cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  cols.push(cur);
+  return cols;
 }
 
 // ─── 组件 ──────────────────────────────────────────────────────────────────
@@ -290,17 +324,19 @@ export function AnnotatorWorkspace() {
     const { psdData: pd, layerStates } = useAnnotatorStore.getState();
     if (!pd) return null;
     const rows: string[] = [];
+    const counter: Record<string, number> = {};
     for (const node of flattenNodes(pd.layers)) {
       if (node.isGroup) continue;
       const state = layerStates[node.id];
       const type = state?.type ?? "";
       const layerInfo = JSON.stringify({ layer_name: node.name });
       const escapedInfo = `"${layerInfo.replace(/"/g, '""')}"`;
-      rows.push(`${type},${node.x},${node.y},${node.width},${node.height},${escapedInfo}`);
+      const assetFilename = safeFilename(node.name, counter);
+      rows.push(`${csvField(node.name)},${node.x},${node.y},${node.width},${node.height},${type},${escapedInfo},${csvField(assetFilename)}`);
     }
     if (rows.length === 0) return "";
     const header = `${pd.psdWidth},${pd.psdHeight}`;
-    return [header, "class_label,x,y,w,h,psd_layer_info", ...rows].join("\n");
+    return [header, "layer_name,x,y,w,h,layer_type,psd_layer_info,layer_asset", ...rows].join("\n");
   }
 
   async function handleExportZip() {
@@ -328,6 +364,51 @@ export function AnnotatorWorkspace() {
       const r = await api.save_csv(content, filename);
       if (!r.ok && r.error !== "用户取消") message.error(r.error ?? "保存失败");
       else if (r.ok) showSavedMessage(r.data?.path ?? "");
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
+
+  async function handleRestoreFromCsv() {
+    const { psdData: pd } = useAnnotatorStore.getState();
+    if (!pd) return;
+
+    try {
+      const api = await getApi();
+      const r = await api.pick_and_read_csv();
+      if (!r.ok) {
+        if (r.error !== "用户取消选择") message.error(r.error ?? "读取失败");
+        return;
+      }
+
+      const lines = r.data!.content.split(/\r?\n/);
+      // 第0行：PSD宽高；第1行：列头；第2行起：数据
+      const dataLines = lines.slice(2).filter((l) => l.trim());
+      // 构建 name → nodeId[] 索引（同名图层可能多个）
+      const nameToIds: Record<string, string[]> = {};
+      for (const node of flattenNodes(pd.layers)) {
+        if (node.isGroup) continue;
+        if (!nameToIds[node.name]) nameToIds[node.name] = [];
+        nameToIds[node.name].push(node.id);
+      }
+
+      let matched = 0;
+      const { setType } = useAnnotatorStore.getState();
+      for (const line of dataLines) {
+        const cols = parseCsvLine(line);
+        const layerName = cols[0]?.trim() ?? "";
+        const layerType = cols[5]?.trim() ?? "";
+        if (!layerName) continue;
+
+        const ids = nameToIds[layerName];
+        if (!ids) continue;
+        for (const id of ids) {
+          setType(id, layerType);
+          matched++;
+        }
+      }
+
+      message.success(`已恢复 ${matched} 个图层的标注`);
     } catch (e) {
       message.error(String(e));
     }
@@ -367,7 +448,7 @@ export function AnnotatorWorkspace() {
               disabled={!annotatingFile.trim() || !psdData}
               onClick={() => handleExportZip()}
             >
-              导出
+              导出全部
             </Button>
             <Dropdown
               disabled={!annotatingFile.trim() || !psdData}
@@ -377,13 +458,13 @@ export function AnnotatorWorkspace() {
                   {
                     key: "csv",
                     icon: <TableOutlined />,
-                    label: "导出 CSV",
+                    label: "只导出 CSV",
                     onClick: () => void handleDownloadCsv(),
                   },
                   {
                     key: "psd",
                     icon: <FilePptFilled />,
-                    label: "导出 PSD",
+                    label: "只导出 PSD",
                     onClick: () => void handleSavePsd(),
                   },
                 ] satisfies MenuProps["items"],
@@ -392,6 +473,12 @@ export function AnnotatorWorkspace() {
               <Button icon={<EllipsisOutlined />} disabled={!annotatingFile.trim() || !psdData} />
             </Dropdown>
           </Space.Compact>
+          <Button icon={<DeliveredProcedureOutlined />}
+            disabled={!annotatingFile.trim() || !psdData}
+            onClick={() => handleRestoreFromCsv()}
+          >
+            从CSV恢复标注
+          </Button>
         </Flex>
       </div>
 

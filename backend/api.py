@@ -208,6 +208,84 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def pick_and_read_csv(self) -> dict[str, Any]:
+        """弹原生 dialog 让用户选 .csv 文件，读取内容后以字符串返回。"""
+        try:
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+
+            picked = win.create_file_dialog(
+                webview.OPEN_DIALOG,
+                allow_multiple=False,
+                file_types=("CSV files (*.csv)",),
+            )
+            if not picked:
+                return {"ok": False, "error": "用户取消选择"}
+            p = Path(picked[0])
+            if not p.is_file():
+                return {"ok": False, "error": f"文件不存在：{picked[0]}"}
+            # 优先 utf-8-sig（带 BOM），回退 gbk
+            try:
+                content = p.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                content = p.read_text(encoding="gbk", errors="replace")
+            return {"ok": True, "data": {"content": content, "name": p.name}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def pick_folder(self) -> dict[str, Any]:
+        """弹原生 dialog 让用户选文件夹，返回路径。"""
+        try:
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+            picked = win.create_file_dialog(webview.FOLDER_DIALOG)
+            if not picked:
+                return {"ok": False, "error": "用户取消选择"}
+            p = Path(picked[0])
+            return {"ok": True, "data": {"path": str(p)}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def read_images_from_folder(self, folder_path: str, filenames: list) -> dict[str, Any]:
+        """从指定文件夹读取图片列表，返回 {filename: base64_string} 字典。"""
+        import base64
+        try:
+            folder = Path(folder_path)
+            result: dict[str, str] = {}
+            for fname in filenames:
+                if not fname:
+                    continue
+                p = folder / fname
+                if p.is_file():
+                    result[fname] = base64.b64encode(p.read_bytes()).decode("ascii")
+            return {"ok": True, "data": result}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    def save_image_base64(self, data_url: str, suggested_name: str) -> dict[str, Any]:
+        """将 canvas.toDataURL 返回的 base64 PNG 保存为文件（弹原生 Save 对话框）。"""
+        import base64
+        try:
+            win = _get_window()
+            if win is None:
+                return {"ok": False, "error": "pywebview window 未就绪"}
+            saved = win.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=suggested_name,
+                file_types=("PNG files (*.png)",),
+            )
+            if not saved:
+                return {"ok": False, "error": "用户取消"}
+            save_path = saved if isinstance(saved, str) else saved[0]
+            if "," in data_url:
+                data_url = data_url.split(",", 1)[1]
+            Path(save_path).write_bytes(base64.b64decode(data_url))
+            return {"ok": True, "data": {"path": save_path}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def pick_psd_only_file(self) -> dict[str, Any]:
         """弹原生 dialog，仅可选 .psd（不含 .psb），返回真实路径。"""
         try:

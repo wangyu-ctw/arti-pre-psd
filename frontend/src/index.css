@@ -23,7 +23,7 @@ body {
   color: #1f2937;
 }
 
-.ant-table {
+.ant-table, .ant-table-container, .ant-table-wrapper,.ant-table-header, table, th {
   border-start-end-radius: 0!important;
   border-radius: 0!important;
 }
