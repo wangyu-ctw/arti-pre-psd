@@ -102,6 +102,13 @@ export interface PyApi {
     filenames: string[],
   ) => Promise<BackendResult<Record<string, string>>>;
 
+  /** 将 base64 data URL 直接覆盖写入指定文件夹的文件（裁切覆盖原图，无弹框）。 */
+  save_asset_file: (
+    folder_path: string,
+    filename: string,
+    data_url: string,
+  ) => Promise<BackendResult<{ path: string }>>;
+
   /** 将 canvas.toDataURL 的 base64 PNG 保存为文件（弹原生 Save 对话框）。 */
   save_image_base64: (
     data_url: string,

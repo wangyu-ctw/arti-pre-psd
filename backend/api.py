@@ -264,6 +264,18 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def save_asset_file(self, folder_path: str, filename: str, data_url: str) -> dict[str, Any]:
+        """将 base64 data URL 直接覆盖写入指定文件夹的文件（无弹框，供裁切覆盖原图使用）。"""
+        import base64
+        try:
+            if "," in data_url:
+                data_url = data_url.split(",", 1)[1]
+            p = Path(folder_path) / filename
+            p.write_bytes(base64.b64decode(data_url))
+            return {"ok": True, "data": {"path": str(p)}}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def save_image_base64(self, data_url: str, suggested_name: str) -> dict[str, Any]:
         """将 canvas.toDataURL 返回的 base64 PNG 保存为文件（弹原生 Save 对话框）。"""
         import base64

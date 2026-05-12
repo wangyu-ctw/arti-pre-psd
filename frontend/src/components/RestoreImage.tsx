@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import {
   App as AntApp, Button, Empty, Input, InputNumber,
-  Modal, Select, Splitter, Table,
+  Select, Splitter, Table,
 } from "antd";
 import type { TableColumnsType } from "antd";
-import { FileTextOutlined, FolderOpenOutlined, PictureOutlined, XFilled } from "@ant-design/icons";
+import { TableOutlined, FolderOpenOutlined, PictureOutlined, XFilled } from "@ant-design/icons";
 import { getApi } from "../api";
 import { LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS } from "../utils/config";
+import LayerPreviewModal from "./LayerPreviewModal";
 import "./RestoreImage.css";
 
 // ── 数据类型 ────────────────────────────────────────────────────────────────
 
-interface AssetRow {
+export interface AssetRow {
   key: string;
   layer_name: string;
   x: number;
@@ -42,6 +43,10 @@ function parseCsvLine(line: string): string[] {
   }
   cols.push(cur);
   return cols;
+}
+
+function csvField(val: string): string {
+  return val.includes(",") || val.includes('"') ? `"${val.replace(/"/g, '""')}"` : val;
 }
 
 function parseCsvContent(content: string): {
@@ -82,7 +87,9 @@ export function RestoreImage() {
   const [psdSize, setPsdSize] = useState<{ width: number; height: number } | null>(null);
   const [assetsData, setAssetsData] = useState<AssetRow[]>([]);
   const [rendering, setRendering] = useState(false);
-  const [previewRow, setPreviewRow] = useState<AssetRow | null>(null);
+  const [previewRowKey, setPreviewRowKey] = useState<string | null>(null);
+  const [previewImageB64, setPreviewImageB64] = useState<string | null>(null);
+  const previewRow = previewRowKey ? (assetsData.find((r) => r.key === previewRowKey) ?? null) : null;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tableWrapRef = useRef<HTMLDivElement>(null);
@@ -240,6 +247,34 @@ export function RestoreImage() {
     if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
   }
 
+  // ── 预览 Modal ───────────────────────────────────────────────────────────
+
+  function openPreview(row: AssetRow) {
+    setPreviewRowKey(row.key);
+    setPreviewImageB64(imageB64Ref.current[row.layer_asset] ?? null);
+  }
+
+  function closePreview() {
+    setPreviewRowKey(null);
+    setPreviewImageB64(null);
+  }
+
+  function handleAssetUpdated(key: string, patch: Partial<AssetRow>, newB64: string) {
+    const newData = assetsData.map((r) => r.key === key ? { ...r, ...patch } : r);
+    setAssetsData(newData);
+    setPreviewImageB64(newB64);
+    const row = assetsData.find((r) => r.key === key);
+    if (row) {
+      imageB64Ref.current[row.layer_asset] = newB64;
+      const img = new Image();
+      img.onload = () => {
+        imageCacheRef.current[row.layer_asset] = img;
+        if (psdSize) redrawCanvas(newData, psdSize);
+      };
+      img.src = `data:image/png;base64,${newB64}`;
+    }
+  }
+
   // ── 行数据修改 ───────────────────────────────────────────────────────────
 
   function updateRow(key: string, patch: Partial<AssetRow>) {
@@ -254,6 +289,32 @@ export function RestoreImage() {
   }
 
   // ── 导出图片 ─────────────────────────────────────────────────────────────
+
+  async function handleExportCsv() {
+    if (!psdSize || assetsData.length === 0) return;
+    const header = `${psdSize.width},${psdSize.height}`;
+    const colNames = "layer_name,x,y,w,h,layer_type,psd_layer_info,layer_asset";
+    const rows = assetsData.map((r) =>
+      [
+        csvField(r.layer_name),
+        r.x, r.y, r.w, r.h,
+        csvField(r.layer_type),
+        csvField(r.psd_layer_info),
+        csvField(r.layer_asset),
+      ].join(",")
+    );
+    const content = [header, colNames, ...rows].join("\n");
+    const filename = csvName.replace(/\.csv$/i, "")
+    const suggested =  `${filename || 'annotation'}_${Number(new Date())}.csv`;
+    try {
+      const api = await getApi();
+      const r = await api.save_csv(content, suggested);
+      if (!r.ok && r.error !== "用户取消") message.error(r.error ?? "保存失败");
+      else if (r.ok) message.success("已保存");
+    } catch (e) {
+      message.error(String(e));
+    }
+  }
 
   async function handleExportImage() {
     const canvas = canvasRef.current;
@@ -277,14 +338,14 @@ export function RestoreImage() {
       title: "layer_name",
       dataIndex: "layer_name",
       key: "layer_name",
-      width: 130,
+      width: 180,
       ellipsis: true,
       render: (text: string, row) => (
         <Button
           type="link"
           size="small"
           style={{ padding: 0, height: "auto" }}
-          onClick={() => setPreviewRow(row)}
+          onClick={() => openPreview(row)}
         >
           {text}
         </Button>
@@ -294,12 +355,12 @@ export function RestoreImage() {
       title: "x",
       dataIndex: "x",
       key: "x",
-      width: 72,
+      width: 84,
       render: (val: number, row) => (
         <InputNumber
           size="small"
           value={val}
-          style={{ width: 64 }}
+          style={{ width: 72 }}
           onChange={(v) => handleXYChange(row.key, "x", v)}
         />
       ),
@@ -308,27 +369,27 @@ export function RestoreImage() {
       title: "y",
       dataIndex: "y",
       key: "y",
-      width: 72,
+      width: 84,
       render: (val: number, row) => (
         <InputNumber
           size="small"
           value={val}
-          style={{ width: 64 }}
+          style={{ width: 72 }}
           onChange={(v) => handleXYChange(row.key, "y", v)}
         />
       ),
     },
-    { title: "w", dataIndex: "w", key: "w", width: 55 },
-    { title: "h", dataIndex: "h", key: "h", width: 55 },
+    { title: "w", dataIndex: "w", key: "w", width: 72 },
+    { title: "h", dataIndex: "h", key: "h", width: 72 },
     {
       title: "layer_type",
       dataIndex: "layer_type",
       key: "layer_type",
-      width: 130,
+      width: 120,
       render: (val: string, row) => (
         <Select
           size="small"
-          style={{ width: 120 }}
+          style={{ width: 110 }}
           value={val || undefined}
           placeholder="类型"
           allowClear
@@ -390,22 +451,31 @@ export function RestoreImage() {
                   value={csvName}
                   placeholder="未选择"
                 />
-                <Button icon={<FileTextOutlined />} onClick={() => void handlePickCsv()}>
+                <Button icon={<TableOutlined />} onClick={() => void handlePickCsv()}>
                   选择
                 </Button>
               </div>
 
               <div className="ri-row ri-row--actions">
                 <Button onClick={handleClear}>清空</Button>
-                <Button
-                  type="primary"
-                  icon={<PictureOutlined />}
-                  loading={rendering}
-                  disabled={!canvasReady || assetsData.length === 0}
-                  onClick={() => void handleExportImage()}
-                >
-                  导出图片
-                </Button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Button
+                    icon={<TableOutlined />}
+                    disabled={assetsData.length === 0}
+                    onClick={() => void handleExportCsv()}
+                  >
+                    导出 CSV
+                  </Button>
+                  <Button
+                    type="primary"
+                    icon={<PictureOutlined />}
+                    loading={rendering}
+                    disabled={!canvasReady || assetsData.length === 0}
+                    onClick={() => void handleExportImage()}
+                  >
+                    导出图片
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -447,26 +517,13 @@ export function RestoreImage() {
         </Splitter.Panel>
       </Splitter>
 
-      {/* ── 图层图片预览 Modal ── */}
-      <Modal
-        open={previewRow !== null}
-        title={previewRow?.layer_name}
-        footer={null}
-        onCancel={() => setPreviewRow(null)}
-        width="80%"
-        styles={{ body: { padding: 8, textAlign: "center", height: "80vh" } }}
-        centered
-      >
-        {previewRow && (
-          imageB64Ref.current[previewRow.layer_asset]
-            ? <img
-                src={`data:image/png;base64,${imageB64Ref.current[previewRow.layer_asset]}`}
-                alt={previewRow.layer_name}
-                style={{ maxWidth: "80vw", maxHeight: "70vh", display: "block", margin: "0 auto" }}
-              />
-            : <Empty description="图片未加载（请先选择 assets 文件夹）" />
-        )}
-      </Modal>
+      <LayerPreviewModal
+        row={previewRow}
+        imageB64={previewImageB64}
+        assetsFolder={assetsFolder}
+        onClose={closePreview}
+        onAssetUpdated={handleAssetUpdated}
+      />
     </>
   );
 }
