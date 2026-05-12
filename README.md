@@ -156,15 +156,15 @@ ExtendScript 详细说明见 `backend/psExtendScript/README.md`。
 
 ---
 
-## 打包 macOS App（Artiprepsd）
+## 打包 macOS 安装器（ArtiprePSD）
 
-已提供一键脚本：`scripts/build_macos_app.sh`。
+已提供一键脚本：`scripts/build_macos_installer.sh`，会先生成 `.app`，再封装成可分发的 `.dmg` 安装器。
 
 1. 准备一个 PNG 图标（建议 1024x1024）并固定放到 `assets/app-icon.png`
 2. 执行：
 
 ```bash
-bash scripts/build_macos_app.sh
+bash scripts/build_macos_installer.sh
 ```
 
 脚本会自动完成：
@@ -172,13 +172,24 @@ bash scripts/build_macos_app.sh
 - 构建前端 `frontend/dist`
 - 安装 PyInstaller 打包依赖
 - 把 PNG 转成 `.icns`
-- 生成 `dist/Artiprepsd.app`
+- 生成 `dist/ArtiprePSD.app`
+- 生成 `dist/ArtiprePSD-macOS.dmg`
 
-运行方式：
+安装方式：
 
 ```bash
-open "dist/Artiprepsd.app"
+open "dist/ArtiprePSD-macOS.dmg"
 ```
+
+打开 DMG 后，把 `ArtiprePSD.app` 拖到 `Applications` 即可。
+
+如果只想生成 `.app`，可以单独执行：
+
+```bash
+bash scripts/build_macos_app.sh
+```
+
+当前脚本不会做代码签名与 notarization；发给他人安装时，首次打开可能会遇到 macOS Gatekeeper 提示。
 
 ---
 

@@ -113,8 +113,9 @@ function main(){
 		try{ 
 			doc.activeLayer = allArtLayers[i];
 			var shouldRasterizeSmartObject = isSmartObjectLayer(allArtLayers[i]);
+			var shouldRasterizeText = isTextLayer(allArtLayers[i]);
 			var shouldFlattenLayerStyle = hasLayerStyle();
-			if (shouldRasterizeSmartObject == true){
+			if (shouldRasterizeSmartObject || shouldRasterizeText){
 					rasterizeLayer(); // Also rasterize Smart Objects during this cleanup step
 				}
 			if (shouldFlattenLayerStyle == true && hasLayerStyle() == true){ // Only if the layer still has a layer style
@@ -235,6 +236,20 @@ function hasLayerStyle() {
 function isSmartObjectLayer(layer) {
 	try {
 		return layer.kind === LayerKind.SMARTOBJECT;
+	}catch(e) {
+		return false;
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Function: isTextLayer
+// Usage: see if the supplied ArtLayer is a Text layer
+// Input: layer, ArtLayer
+// Return: true if the layer is a Text layer
+///////////////////////////////////////////////////////////////////////////////
+function isTextLayer(layer) {
+	try {
+		return layer.kind === LayerKind.TEXT;
 	}catch(e) {
 		return false;
 	}

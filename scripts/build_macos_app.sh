@@ -41,7 +41,7 @@ fi
 PY="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
 "$PIP" install --upgrade pip >/dev/null
-"$PIP" install -r "$ROOT/backend/requirements.txt" pyinstaller >/dev/null
+"$PIP" install -r "$ROOT/backend/requirements.txt" pyinstaller pillow >/dev/null
 
 echo "[build] 3/5 生成 .icns 图标..."
 rm -f "$ICON_ICNS"
