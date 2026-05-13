@@ -547,6 +547,28 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    def psd_insert_slices(self, node_id: str, slices: list[dict]) -> dict[str, Any]:
+        """在指定图层上方（同父组内）按顺序插入切片像素层，算作 1 步 undo。
+
+        node_id : 目标图层的 id 字符串（来自 PsdLayerNode.id）。
+        slices  : 切片信息列表，每条 {base64: str, x: int, y: int, w: int, h: int}；
+                  x/y 为相对于目标图层左上角的偏移，base64 为纯 PNG base64（无前缀）。
+        返回与其他结构性操作相同的 PsdInfoPayload。
+        """
+        try:
+            from . import psd_session
+
+            session = psd_session.get_session()
+            if session is None:
+                return {"ok": False, "error": "无活动会话，请先调用 load_psd_session"}
+            if not isinstance(node_id, str) or not node_id:
+                return {"ok": False, "error": "node_id 不能为空"}
+            if not isinstance(slices, list):
+                return {"ok": False, "error": "slices 必须为数组"}
+            return {"ok": True, "data": session.insert_slices(node_id, slices)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     def psd_undo(self) -> dict[str, Any]:
         """回退 PSD 上一步结构性操作（删除/解散/合并），返回回退后的树和缩略图。"""
         try:

@@ -13,12 +13,13 @@ import {
 } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { Button, Dropdown, Flex, Input, Select, Spin, Tooltip, message } from "antd";
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CanvasSelectMode } from "../store/annotatorStore";
-import type { PsdLayerNode } from "../pywebview";
-import { getApi } from "../api";
-import { useAnnotatorStore } from "../store/annotatorStore";
-import { LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS } from "../utils/config";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CanvasSelectMode } from "../../store/annotatorStore";
+import type { PsdLayerNode } from "../../pywebview";
+import { getApi } from "../../api";
+import { useAnnotatorStore } from "../../store/annotatorStore";
+import { LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS, layerTypeLabel } from "../../utils/config";
+import { LayerSliceModal, type SliceItem } from "./LayerSliceModal";
 import "./PsdLayerPanel.css";
 
 const DEFAULT_STATE = { eyeOn: true, type: "", selected: false };
@@ -82,12 +83,14 @@ const LayerNode = React.memo(function LayerNode({
   nodeRefs,
   collapsedIds,
   setCollapsedIds,
+  onSlice,
 }: {
   node: PsdLayerNode;
   depth: number;
   nodeRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
   collapsedIds: Set<string>;
   setCollapsedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  onSlice: (sid: number, nodeId: string) => void;
 }) {
   // 精确订阅：只有本节点的 state 改变才触发重渲染
   const state = useAnnotatorStore((s) => s.layerStates[node.id]) ?? DEFAULT_STATE;
@@ -103,9 +106,19 @@ const LayerNode = React.memo(function LayerNode({
     .filter(Boolean)
     .join(" ");
 
+  // 通过 ref 引用 onSlice，避免加入 useMemo 依赖导致不必要的重算
+  const onSliceRef = useRef(onSlice);
+  onSliceRef.current = onSlice;
+
   // 右键菜单。只在 node.id / node.isGroup 变化时重算（实际上从不变化）
   const contextMenuItems = useMemo<MenuProps["items"]>(() => {
     const store = () => useAnnotatorStore.getState();
+    const sliceItem = {
+      key: "slice",
+      label: "切分图层",
+      disabled: node.psdSid == null,
+      onClick: () => { if (node.psdSid != null) onSliceRef.current(node.psdSid, node.id); },
+    };
     if (node.isGroup) {
       return [
         {
@@ -116,7 +129,7 @@ const LayerNode = React.memo(function LayerNode({
             label: (
               <span>
                 <XFilled style={{ color: o.color, marginRight: 6 }} />
-                {o.label}
+                {layerTypeLabel(o.value)}
               </span>
             ),
             onClick: () => store().setTypeForSubtree(node.id, o.value),
@@ -162,6 +175,7 @@ const LayerNode = React.memo(function LayerNode({
             }
           },
         },
+        sliceItem,
         { type: "divider" as const },
         {
           key: "delete",
@@ -172,6 +186,7 @@ const LayerNode = React.memo(function LayerNode({
       ];
     }
     return [
+      sliceItem,
       {
         key: "delete",
         label: "删除此图层",
@@ -179,7 +194,7 @@ const LayerNode = React.memo(function LayerNode({
         onClick: () => store().requestDelete(new Set([node.id])),
       },
     ];
-  }, [node.id, node.isGroup]);
+  }, [node.id, node.isGroup, node.psdSid]);
 
   return (
   <>
@@ -255,7 +270,7 @@ const LayerNode = React.memo(function LayerNode({
                   placeholder="类型"
                   popupMatchSelectWidth={false}
                   allowClear
-                  options={LAYER_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                  options={LAYER_TYPE_OPTIONS.map((o) => ({ value: o.value, label: layerTypeLabel(o.value) }))}
                   labelRender={(label) => {
                     return (
                       <div>
@@ -268,7 +283,7 @@ const LayerNode = React.memo(function LayerNode({
                     if (!opt) return option.label;
                     return (
                       <div>
-                        <XFilled style={{ color: opt.color, marginRight: 4 }} />{opt.label}
+                        <XFilled style={{ color: opt.color, marginRight: 4 }} />{layerTypeLabel(option.value as string)}
                       </div>
                     );
                   }}
@@ -317,6 +332,7 @@ const LayerNode = React.memo(function LayerNode({
         nodeRefs={nodeRefs}
         collapsedIds={collapsedIds}
         setCollapsedIds={setCollapsedIds}
+        onSlice={onSlice}
       />
     )}
   </>
@@ -330,12 +346,14 @@ const LayerTree = React.memo(function LayerTree({
   nodeRefs,
   collapsedIds,
   setCollapsedIds,
+  onSlice,
 }: {
   nodes: PsdLayerNode[];
   depth: number;
   nodeRefs: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
   collapsedIds: Set<string>;
   setCollapsedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  onSlice: (sid: number, nodeId: string) => void;
 }) {
   return (
     <>
@@ -347,6 +365,7 @@ const LayerTree = React.memo(function LayerTree({
           nodeRefs={nodeRefs}
           collapsedIds={collapsedIds}
           setCollapsedIds={setCollapsedIds}
+          onSlice={onSlice}
         />
       ))}
     </>
@@ -372,6 +391,26 @@ export function PsdLayerPanel() {
   const pendingScrollId = useRef<string | null>(null);
   const [navIndex, setNavIndex] = useState(0);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+
+  const [sliceOpen, setSliceOpen] = useState(false);
+  const [sliceImageB64, setSliceImageB64] = useState("");
+  const [sliceNodeId, setSliceNodeId] = useState("");
+
+  const handleSlice = useCallback(async (sid: number, nodeId: string) => {
+    try {
+      const api = await getApi();
+      const r = await api.psd_get_layer_preview(sid);
+      if (!r.ok || !r.data) {
+        message.error(r.error ?? "获取图层预览失败");
+        return;
+      }
+      setSliceImageB64(r.data.previewB64);
+      setSliceNodeId(nodeId);
+      setSliceOpen(true);
+    } catch (e) {
+      message.error(String(e));
+    }
+  }, []);
 
   const ancestorIdsByNodeId = useMemo(() => {
     const result = new Map<string, string[]>();
@@ -438,7 +477,7 @@ export function PsdLayerPanel() {
         label: (
           <span>
             <XFilled style={{ color: o.color, marginRight: 6 }} />
-            {o.label}
+            {layerTypeLabel(o.value)}
           </span>
         ),
         onClick: () => {
@@ -451,6 +490,26 @@ export function PsdLayerPanel() {
       })),
     [],
   );
+
+  const handleSliceConfirm = useCallback(async (slices: SliceItem[]) => {
+    try {
+      useAnnotatorStore.setState({ structuralLoading: true });
+      const api = await getApi();
+      const r = await api.psd_insert_slices(
+        sliceNodeId,
+        slices.map((s) => ({ id: s.id, base64: s.base64, x: s.x, y: s.y, w: s.w, h: s.h })),
+      );
+      if (!r.ok || !r.data) {
+        useAnnotatorStore.setState({ structuralLoading: false });
+        message.error(r.error ?? "切分图层失败");
+        return;
+      }
+      useAnnotatorStore.getState().updateFromPsdOp(r.data);
+    } catch (e) {
+      useAnnotatorStore.setState({ structuralLoading: false });
+      message.error(String(e));
+    }
+  }, [sliceNodeId]);
 
   useEffect(() => {
     const targetId = pendingScrollId.current;
@@ -582,6 +641,7 @@ export function PsdLayerPanel() {
           nodeRefs={nodeRefs}
           collapsedIds={collapsedIds}
           setCollapsedIds={setCollapsedIds}
+          onSlice={handleSlice}
         />
         {structuralLoading && (
           <div className="plp-loading-overlay">
@@ -589,6 +649,13 @@ export function PsdLayerPanel() {
           </div>
         )}
       </div>
+
+      <LayerSliceModal
+        open={sliceOpen}
+        imageB64={sliceImageB64}
+        onClose={() => setSliceOpen(false)}
+        onCropConfirm={handleSliceConfirm}
+      />
     </Flex>
   );
 }

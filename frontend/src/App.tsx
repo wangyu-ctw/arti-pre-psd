@@ -7,7 +7,7 @@ import {
 } from "@ant-design/icons";
 import { useMemo } from "react";
 import { getApi } from "./api";
-import { AnnotatorWorkspace } from "./components/AnnotatorWorkspace";
+import { AnnotatorWorkspace } from "./components/AnnotatorWorkspace/AnnotatorWorkspace";
 import { PsdUploader } from "./components/PsdUploader";
 import { RestoreImage } from "./components/RestoreImage";
 import { useAppStore, selectPreprocessBadge } from "./store/appStore";

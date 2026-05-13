@@ -26,6 +26,7 @@ import logging
 import os
 import shutil
 import tempfile
+from pathlib import Path
 from typing import Any, Optional
 
 from psd_tools import PSDImage
@@ -33,6 +34,19 @@ from psd_tools.api.layers import Group, PixelLayer
 from psd_tools.constants import Compression
 
 logger = logging.getLogger(__name__)
+
+# ── 共享配置（从项目根 config.json 读取）──────────────────────────────────────
+
+def _load_layer_type_index_map() -> dict[str, int]:
+    try:
+        cfg_path = Path(__file__).parent.parent / "frontend" / "src" / "config.json"
+        with cfg_path.open(encoding="utf-8") as f:
+            return json.load(f).get("layer_type_index_map", {})
+    except Exception as exc:
+        logger.warning("psd_session: 无法加载 config.json，layer_type_index 列将为空: %s", exc)
+        return {}
+
+_LAYER_TYPE_INDEX_MAP: dict[str, int] = _load_layer_type_index_map()
 
 # ── 模块级单例 ─────────────────────────────────────────────────────────────
 
@@ -967,6 +981,138 @@ class PsdSession:
         self._save_step()
         return self._result()
 
+    def insert_slices(self, node_id: str, slices: list[dict[str, Any]]) -> dict[str, Any]:
+        """在指定图层上方（同父组内）按顺序插入切片像素层，算作 1 步 undo。
+
+        slices 中每条格式：
+          {base64: str, x: int, y: int, w: int, h: int}
+          - base64: PNG 纯 base64（不含 data:image/... 前缀）
+          - x, y  : 相对于原图层左上角的偏移（像素）
+          - w, h  : 切片尺寸
+
+        插入后面板顺序（从上到下）：
+          slice[0] … slice[n-1] → 原图层（保留不变）
+        """
+        import base64 as _b64
+        import io as _io
+        from PIL import Image
+
+        # ── 1. 找目标节点 ─────────────────────────────────────────────────
+        def _find_by_id(nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+            for n in nodes:
+                if n["id"] == node_id:
+                    return n
+                if n.get("children"):
+                    found = _find_by_id(n["children"])
+                    if found is not None:
+                        return found
+            return None
+
+        target_node = _find_by_id(self._current_tree)
+        if target_node is None:
+            raise RuntimeError(f"找不到目标图层：{node_id}")
+
+        if not slices:
+            return self._result()
+
+        target_layer = self._layer_map.get(target_node["_sid"])
+        if target_layer is None:
+            raise RuntimeError(f"图层对象无效（已删除？）：{node_id}")
+
+        # ── 2. 确定插入父级与位置 ─────────────────────────────────────────
+        parent = getattr(target_layer, "parent", None)
+        if parent is None:
+            raise RuntimeError(f"图层没有父级：{node_id}")
+
+        insert_index = parent.index(target_layer)
+        layer_left = int(target_layer.left)
+        layer_top = int(target_layer.top)
+
+        self._push_snapshot()
+
+        new_leaf_nodes: list[dict[str, Any]] = []
+
+        try:
+            for i, s in enumerate(slices):
+                png_bytes = _b64.b64decode(s["base64"])
+                pil_img = Image.open(_io.BytesIO(png_bytes)).convert("RGBA")
+
+                slice_x = int(s["x"])
+                slice_y = int(s["y"])
+                slice_w = int(s["w"])
+                slice_h = int(s["h"])
+
+                # PSD 画布坐标 = 原图层左上角 + 切片内部偏移
+                psd_left = layer_left + slice_x
+                psd_top = layer_top + slice_y
+
+                slice_name = f"{target_node['name']}_{s.get('id', str(i))}"
+                record, channels = self._make_pixel_record_and_channels(
+                    pil_img, slice_name, psd_left, psd_top
+                )
+                # 确保边界正确（_build_layer_record_and_channels 有时依赖图像尺寸，
+                # 此处显式修正以防万一）
+                record.bottom = psd_top + slice_h
+                record.right = psd_left + slice_w
+
+                pixel_lyr = PixelLayer(parent, record, channels)
+                # psd-tools 迭代顺序为 底→顶（index 0 = 面板最底层）。
+                # 要让切片出现在原图层"上方"（面板更靠顶），必须插到 insert_index+1。
+                # 始终插在 insert_index+1：每次都把上一张切片再往上推一位，
+                # 最终 slice[0] 在最顶、slice[n-1] 紧贴原图层之上。
+                parent.insert(insert_index + 1, pixel_lyr)
+
+                new_sid = next(self._sid_iter)
+                self._layer_map[new_sid] = pixel_lyr
+
+                new_leaf_nodes.append({
+                    "_sid": new_sid,
+                    "id": "placeholder",
+                    "name": slice_name,
+                    "x": psd_left,
+                    "y": psd_top,
+                    "width": slice_w,
+                    "height": slice_h,
+                    "visible": True,
+                    "isGroup": False,
+                })
+
+        except Exception as exc:
+            logger.error(
+                "insert_slices: 插入切片失败，回滚操作（node_id=%s）: %s", node_id, exc
+            )
+            self._rollback()
+            raise RuntimeError(f"切分图层失败：{exc}") from exc
+
+        # ── 3. 更新逻辑树：在 target 后插入新叶节点 ──────────────────────
+        # 后端树顺序为 底→顶（与 psd-tools 层序相同）。
+        # 实际插入后的层序（底→顶）：original, slice[n-1], …, slice[1], slice[0]。
+        # 因此树中 target 之后需紧跟 reversed(new_leaf_nodes)，方可与 _rebind 对齐。
+        def _insert_after(
+            nodes: list[dict[str, Any]],
+            tid: str,
+            new_nodes: list[dict[str, Any]],
+        ) -> list[dict[str, Any]]:
+            result: list[dict[str, Any]] = []
+            for node in nodes:
+                result.append(node)
+                if node["id"] == tid:
+                    result.extend(new_nodes)
+                else:
+                    if "children" in node:
+                        result[-1] = {
+                            **node,
+                            "children": _insert_after(node["children"], tid, new_nodes),
+                        }
+            return result
+
+        # reversed：使树顺序与实际 parent 层序（底→顶）保持一致
+        new_tree = _insert_after(self._current_tree, node_id, list(reversed(new_leaf_nodes)))
+        self._current_tree = _reindex_tree(new_tree, "root")
+
+        self._save_step()
+        return self._result()
+
     # ── Undo ───────────────────────────────────────────────────────────────
 
     def undo(self) -> dict[str, Any] | None:
@@ -1062,16 +1208,17 @@ class PsdSession:
                         filename = ""  # 合成失败时 layer_asset 留空
 
                 name = node.get("name", "")
+                layer_type_index = str(_LAYER_TYPE_INDEX_MAP.get(layer_type, ""))
                 layer_info = json.dumps({"layer_name": name}, ensure_ascii=False)
                 escaped_info = '"' + layer_info.replace('"', '""') + '"'
                 csv_rows.append(
-                    f"{_csv_field(name)},{node['x']},{node['y']},{node['width']},{node['height']},{layer_type},{escaped_info},{_csv_field(filename)}"
+                    f"{_csv_field(name)},{node['x']},{node['y']},{node['width']},{node['height']},{layer_type},{layer_type_index},{escaped_info},{_csv_field(filename)}"
                 )
 
         _walk(self._current_tree)
 
         header = f"{self._psd.width},{self._psd.height}"
-        col_names = "layer_name,x,y,w,h,layer_type,psd_layer_info,layer_asset"
+        col_names = "layer_name,x,y,w,h,layer_type,layer_type_index,psd_layer_info,layer_asset"
         csv_content = "\n".join([header, col_names] + csv_rows)
         return csv_content, slices
 

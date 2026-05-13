@@ -186,6 +186,16 @@ export interface PyApi {
     height: number;
   }>>;
 
+  /**
+   * 在指定图层上方（同父组内）按顺序插入切片像素层，算作 1 步 undo。
+   * node_id: 目标图层的 PsdLayerNode.id。
+   * slices: 切片列表，x/y 为相对于目标图层左上角的偏移。
+   */
+  psd_insert_slices: (
+    node_id: string,
+    slices: Array<{ id: string; base64: string; x: number; y: number; w: number; h: number }>,
+  ) => Promise<BackendResult<PsdInfoPayload>>;
+
   /** 回退上一步结构性操作，返回回退后的树和缩略图；无历史时 ok=false。 */
   psd_undo: () => Promise<BackendResult<PsdInfoPayload>>;
 

@@ -11,10 +11,11 @@ import {
 import { App as AntApp, Button, Dropdown, Flex, Input, Modal, Space, Spin, Splitter } from "antd";
 import type { MenuProps } from "antd";
 import { useEffect, useState } from "react";
-import { getApi } from "../api";
-import { useAppStore } from "../store/appStore";
-import { useAnnotatorStore } from "../store/annotatorStore";
-import type { PsdLayerNode } from "../pywebview";
+import { getApi } from "../../api";
+import { LAYER_TYPE_INDEX_MAP } from "../../utils/config";
+import { useAppStore } from "../../store/appStore";
+import { useAnnotatorStore } from "../../store/annotatorStore";
+import type { PsdLayerNode } from "../../pywebview";
 import { PsdPreviewCanvas } from "./PsdPreviewCanvas";
 import { PsdLayerPanel } from "./PsdLayerPanel";
 
@@ -284,7 +285,7 @@ export function AnnotatorWorkspace() {
             size="small"
             style={{ paddingLeft: 4 }}
             onClick={() => {
-              void getApi().then((api) => api.open_external(`file://${dir}`));
+              getApi().then((api) => api.open_external(`file://${dir}`));
             }}
           >
             查看文件夹
@@ -329,14 +330,15 @@ export function AnnotatorWorkspace() {
       if (node.isGroup) continue;
       const state = layerStates[node.id];
       const type = state?.type ?? "";
+      const typeIndex = LAYER_TYPE_INDEX_MAP[type] ?? "";
       const layerInfo = JSON.stringify({ layer_name: node.name });
       const escapedInfo = `"${layerInfo.replace(/"/g, '""')}"`;
       const assetFilename = safeFilename(node.name, counter);
-      rows.push(`${csvField(node.name)},${node.x},${node.y},${node.width},${node.height},${type},${escapedInfo},${csvField(assetFilename)}`);
+      rows.push(`${csvField(node.name)},${node.x},${node.y},${node.width},${node.height},${type},${typeIndex},${escapedInfo},${csvField(assetFilename)}`);
     }
     if (rows.length === 0) return "";
     const header = `${pd.psdWidth},${pd.psdHeight}`;
-    return [header, "layer_name,x,y,w,h,layer_type,psd_layer_info,layer_asset", ...rows].join("\n");
+    return [header, "layer_name,x,y,w,h,layer_type,layer_type_index,psd_layer_info,layer_asset", ...rows].join("\n");
   }
 
   async function handleExportZip() {
@@ -459,13 +461,13 @@ export function AnnotatorWorkspace() {
                     key: "csv",
                     icon: <TableOutlined />,
                     label: "只导出 CSV",
-                    onClick: () => void handleDownloadCsv(),
+                    onClick: () => handleDownloadCsv(),
                   },
                   {
                     key: "psd",
                     icon: <FilePptFilled />,
                     label: "只导出 PSD",
-                    onClick: () => void handleSavePsd(),
+                    onClick: () => handleSavePsd(),
                   },
                 ] satisfies MenuProps["items"],
               }}

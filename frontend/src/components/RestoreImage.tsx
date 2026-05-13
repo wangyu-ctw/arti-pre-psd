@@ -6,7 +6,7 @@ import {
 import type { TableColumnsType } from "antd";
 import { TableOutlined, FolderOpenOutlined, PictureOutlined, XFilled } from "@ant-design/icons";
 import { getApi } from "../api";
-import { LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS } from "../utils/config";
+import { LAYER_TYPE_INDEX_MAP, LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS, layerTypeLabel } from "../utils/config";
 import LayerPreviewModal from "./LayerPreviewModal";
 import "./RestoreImage.css";
 
@@ -59,6 +59,11 @@ function parseCsvContent(content: string): {
   const [w, h] = lines[0].split(",").map(Number);
   const psdSize = w > 0 && h > 0 ? { width: w, height: h } : null;
 
+  // 兼容旧格式：检查表头第 2 行是否含 layer_type_index 列
+  const colHeader = lines[1] ?? "";
+  const hasTypeIndex = colHeader.includes("layer_type_index");
+  const offset = hasTypeIndex ? 1 : 0;
+
   const rows: AssetRow[] = lines.slice(2).map((line, idx) => {
     const cols = parseCsvLine(line);
     return {
@@ -69,8 +74,8 @@ function parseCsvContent(content: string): {
       w: Number(cols[3]) || 0,
       h: Number(cols[4]) || 0,
       layer_type: cols[5]?.trim() ?? "",
-      psd_layer_info: cols[6]?.trim() ?? "",
-      layer_asset: cols[7]?.trim() ?? "",
+      psd_layer_info: cols[6 + offset]?.trim() ?? "",
+      layer_asset: cols[7 + offset]?.trim() ?? "",
     };
   });
 
@@ -215,7 +220,7 @@ export function RestoreImage() {
     setAssetsFolder(folder);
     imageCacheRef.current = {};
     if (psdSize && assetsData.length > 0) {
-      void renderCanvas(assetsData, psdSize, folder);
+      renderCanvas(assetsData, psdSize, folder);
     }
   }
 
@@ -232,7 +237,7 @@ export function RestoreImage() {
     setAssetsData(rows);
     imageCacheRef.current = {};
     if (assetsFolder && size && rows.length > 0) {
-      void renderCanvas(rows, size, assetsFolder);
+      renderCanvas(rows, size, assetsFolder);
     }
   }
 
@@ -293,12 +298,13 @@ export function RestoreImage() {
   async function handleExportCsv() {
     if (!psdSize || assetsData.length === 0) return;
     const header = `${psdSize.width},${psdSize.height}`;
-    const colNames = "layer_name,x,y,w,h,layer_type,psd_layer_info,layer_asset";
+    const colNames = "layer_name,x,y,w,h,layer_type,layer_type_index,psd_layer_info,layer_asset";
     const rows = assetsData.map((r) =>
       [
         csvField(r.layer_name),
         r.x, r.y, r.w, r.h,
         csvField(r.layer_type),
+        LAYER_TYPE_INDEX_MAP[r.layer_type] ?? "",
         csvField(r.psd_layer_info),
         csvField(r.layer_asset),
       ].join(",")
@@ -394,7 +400,7 @@ export function RestoreImage() {
           placeholder="类型"
           allowClear
           popupMatchSelectWidth={false}
-          options={LAYER_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          options={LAYER_TYPE_OPTIONS.map((o) => ({ value: o.value, label: layerTypeLabel(o.value) }))}
           labelRender={(label) => {
             const opt = LAYER_TYPE_MAP[String(label.value)];
             return opt ? (
@@ -409,7 +415,7 @@ export function RestoreImage() {
             return opt ? (
               <span>
                 <XFilled style={{ color: opt.color, marginRight: 4 }} />
-                {opt.label}
+                {layerTypeLabel(String(option.value))}
               </span>
             ) : <span>{option.label}</span>;
           }}
@@ -438,7 +444,7 @@ export function RestoreImage() {
                   value={assetsFolder}
                   placeholder="未选择"
                 />
-                <Button icon={<FolderOpenOutlined />} onClick={() => void handlePickFolder()}>
+                <Button icon={<FolderOpenOutlined />} onClick={() => handlePickFolder()}>
                   选择
                 </Button>
               </div>
@@ -451,7 +457,7 @@ export function RestoreImage() {
                   value={csvName}
                   placeholder="未选择"
                 />
-                <Button icon={<TableOutlined />} onClick={() => void handlePickCsv()}>
+                <Button icon={<TableOutlined />} onClick={() => handlePickCsv()}>
                   选择
                 </Button>
               </div>
@@ -462,7 +468,7 @@ export function RestoreImage() {
                   <Button
                     icon={<TableOutlined />}
                     disabled={assetsData.length === 0}
-                    onClick={() => void handleExportCsv()}
+                    onClick={() => handleExportCsv()}
                   >
                     导出 CSV
                   </Button>
@@ -471,7 +477,7 @@ export function RestoreImage() {
                     icon={<PictureOutlined />}
                     loading={rendering}
                     disabled={!canvasReady || assetsData.length === 0}
-                    onClick={() => void handleExportImage()}
+                    onClick={() => handleExportImage()}
                   >
                     导出图片
                   </Button>

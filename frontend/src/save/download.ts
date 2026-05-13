@@ -5,7 +5,7 @@
  * "返回 ArrayBuffer 给上层处理"或"直接走 pywebview 写盘"等模式，
  * 调用处只需要换成对应的 helper 即可。
  */
-export function downloadPsdBlob(b64: string, filename: string): void {
+export function downloadPsdBlob(b64: string, filename: string) {
   const bin = atob(b64);
   const len = bin.length;
   const bytes = new Uint8Array(len);
@@ -37,7 +37,7 @@ export function deriveCleanedName(originalName: string): string {
  * 触发浏览器下载 CSV 字符串为文件。
  * 头部加 UTF-8 BOM，保证 Excel 正确识别中文。
  */
-export function downloadCsv(content: string, filename: string): void {
+export function downloadCsv(content: string, filename: string) {
   const blob = new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PsdLayerNode } from "../pywebview";
-import { useAnnotatorStore } from "../store/annotatorStore";
-import { DEFAULT_BOX_COLOR, LAYER_TYPE_MAP } from "../utils/config";
+import type { PsdLayerNode } from "../../pywebview";
+import { useAnnotatorStore } from "../../store/annotatorStore";
+import { DEFAULT_BOX_COLOR, LAYER_TYPE_MAP } from "../../utils/config";
 import "./PsdPreviewCanvas.css";
 
 /** canvas 重绘节流（ms） */

@@ -1,0 +1,122 @@
+/* ── 整体布局 ── */
+
+.lsm-left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lsm-crop-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  background: #f5f5f5;
+  border-radius: 6px;
+}
+
+.lsm-crop-actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  padding-bottom: 4px;
+}
+
+.lsm-right {
+  width: 250px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #f0f0f0;
+  padding-left: 12px;
+}
+
+/* ── 右侧面板 ── */
+
+.lsm-right__title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.lsm-right__list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.lsm-right__empty {
+  color: #bbb;
+  text-align: center;
+  padding: 32px 12px 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.lsm-right__footer {
+  flex-shrink: 0;
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid #f0f0f0;
+}
+
+/* ── 切片行 ── */
+
+.lsm-slice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #fff;
+}
+
+.lsm-slice-row__drag {
+  cursor: grab;
+  color: #bbb;
+  font-size: 18px;
+  flex-shrink: 0;
+  line-height: 1;
+  touch-action: none;
+  user-select: none;
+}
+
+.lsm-slice-row__drag:active {
+  cursor: grabbing;
+}
+
+.lsm-slice-row__thumb {
+  width: 200px;
+  height: 200px;
+  object-fit: contain;
+  display: block;
+  border: 1px solid #e8e8e8;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin: 8px 0;
+  background: repeating-conic-gradient(#e8e8e8 0% 25%, #fff 0% 50%) 0 0 / 8px 8px;
+}
+
+.lsm-slice-row__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lsm-slice-row__info {
+  flex: 1;
+  font-size: 12px;
+  color: #555;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+.lsm-slice-row__coord {
+  margin: 0 16px 0 8px;
+}
