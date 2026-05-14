@@ -166,14 +166,13 @@ export function RestoreImage() {
     if (!ctx) return;
     ctx.clearRect(0, 0, size.width, size.height);
 
-    const LW = 1.5;
+    const LW = 3;
     ctx.lineWidth = LW;
     const MARGIN = LW / 2;
 
     for (const row of data) {
-      const color = row.layer_type
-        ? (LAYER_TYPE_MAP[row.layer_type]?.color ?? DEFAULT_BOX_COLOR)
-        : DEFAULT_BOX_COLOR;
+      if (!row.layer_type) continue;
+      const color = LAYER_TYPE_MAP[row.layer_type]?.color ?? DEFAULT_BOX_COLOR;
       ctx.strokeStyle = color;
 
       const bx = row.ax != null ? row.ax : row.x;
