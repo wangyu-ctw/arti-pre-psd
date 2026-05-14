@@ -1,11 +1,9 @@
 {
   "layer_type_index_map": {
-    "Panel": 1,
-    "Bg": 2,
-    "Btn": 3,
-    "Icon": 4,
-    "Bar": 5,
-    "Text": 6,
-    "Decor": 7
+    "Plate": 1,
+    "Badge_Pill": 2,
+    "Bar_Track": 3,
+    "Sprite": 4,
+    "Text": 5
   }
 }
