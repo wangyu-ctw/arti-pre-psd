@@ -6,7 +6,7 @@ import {
 import type { TableColumnsType } from "antd";
 import { TableOutlined, FolderOpenOutlined, PictureOutlined, XFilled } from "@ant-design/icons";
 import { getApi } from "../api";
-import { LAYER_TYPE_INDEX_MAP, LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS, layerTypeLabel } from "../utils/config";
+import { DEFAULT_BOX_COLOR, LAYER_TYPE_INDEX_MAP, LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS, layerTypeLabel } from "../utils/config";
 import LayerPreviewModal from "./LayerPreviewModal";
 import "./RestoreImage.css";
 
@@ -19,6 +19,10 @@ export interface AssetRow {
   y: number;
   w: number;
   h: number;
+  ax?: number;
+  ay?: number;
+  awidth?: number;
+  aheight?: number;
   layer_type: string;
   psd_layer_info: string;
   layer_asset: string;
@@ -59,23 +63,34 @@ function parseCsvContent(content: string): {
   const [w, h] = lines[0].split(",").map(Number);
   const psdSize = w > 0 && h > 0 ? { width: w, height: h } : null;
 
-  // 兼容旧格式：检查表头第 2 行是否含 layer_type_index 列
-  const colHeader = lines[1] ?? "";
-  const hasTypeIndex = colHeader.includes("layer_type_index");
-  const offset = hasTypeIndex ? 1 : 0;
+  // 解析表头行，建立字段名 → 列索引映射，兼容任意列顺序与新旧格式
+  const headers = parseCsvLine(lines[1]);
+  const fi: Record<string, number> = {};
+  headers.forEach((name, i) => { fi[name.trim()] = i; });
+
+  const str = (cols: string[], name: string) => cols[fi[name]]?.trim() ?? "";
+  const num = (cols: string[], name: string) => Number(str(cols, name)) || 0;
+  const optNum = (cols: string[], name: string): number | undefined => {
+    const v = str(cols, name);
+    return v !== "" ? Number(v) : undefined;
+  };
 
   const rows: AssetRow[] = lines.slice(2).map((line, idx) => {
     const cols = parseCsvLine(line);
     return {
       key: String(idx),
-      layer_name: cols[0]?.trim() ?? "",
-      x: Number(cols[1]) || 0,
-      y: Number(cols[2]) || 0,
-      w: Number(cols[3]) || 0,
-      h: Number(cols[4]) || 0,
-      layer_type: cols[5]?.trim() ?? "",
-      psd_layer_info: cols[6 + offset]?.trim() ?? "",
-      layer_asset: cols[7 + offset]?.trim() ?? "",
+      layer_name: str(cols, "layer_name"),
+      x: num(cols, "x"),
+      y: num(cols, "y"),
+      w: num(cols, "w"),
+      h: num(cols, "h"),
+      ax: optNum(cols, "ax"),
+      ay: optNum(cols, "ay"),
+      awidth: optNum(cols, "awidth"),
+      aheight: optNum(cols, "aheight"),
+      layer_type: str(cols, "layer_type"),
+      psd_layer_info: str(cols, "psd_layer_info"),
+      layer_asset: str(cols, "layer_asset"),
     };
   });
 
@@ -97,6 +112,7 @@ export function RestoreImage() {
   const previewRow = previewRowKey ? (assetsData.find((r) => r.key === previewRowKey) ?? null) : null;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const boxCanvasRef = useRef<HTMLCanvasElement>(null);
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const imageCacheRef = useRef<Record<string, HTMLImageElement>>({});
   const imageB64Ref = useRef<Record<string, string>>({});
@@ -140,6 +156,45 @@ export function RestoreImage() {
 
   // ── canvas 绘制 ──────────────────────────────────────────────────────────
 
+  /** 在覆盖层 canvas 上画所有行的边框（有效坐标 + 类型颜色），逻辑与 PsdPreviewCanvas 一致。 */
+  function paintBoxCanvas(data: AssetRow[], size: { width: number; height: number }) {
+    const bc = boxCanvasRef.current;
+    if (!bc) return;
+    bc.width = size.width;
+    bc.height = size.height;
+    const ctx = bc.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, size.width, size.height);
+
+    const LW = 1.5;
+    ctx.lineWidth = LW;
+    const MARGIN = LW / 2;
+
+    for (const row of data) {
+      const color = row.layer_type
+        ? (LAYER_TYPE_MAP[row.layer_type]?.color ?? DEFAULT_BOX_COLOR)
+        : DEFAULT_BOX_COLOR;
+      ctx.strokeStyle = color;
+
+      const bx = row.ax != null ? row.ax : row.x;
+      const by = row.ay != null ? row.ay : row.y;
+      const bw = row.awidth != null ? row.awidth : row.w;
+      const bh = row.aheight != null ? row.aheight : row.h;
+
+      const rawL = bx;
+      const rawT = by;
+      const rawR = bx + bw;
+      const rawB = by + bh;
+
+      const l = rawL < MARGIN ? MARGIN : rawL;
+      const t = rawT < MARGIN ? MARGIN : rawT;
+      const r = rawR > bc.width - MARGIN ? bc.width - MARGIN : rawR;
+      const b = rawB > bc.height - MARGIN ? bc.height - MARGIN : rawB;
+
+      if (r > l && b > t) ctx.strokeRect(l, t, r - l, b - t);
+    }
+  }
+
   /** 仅重绘，不重新加载图片（供 x/y 修改时调用）。 */
   function redrawCanvas(data: AssetRow[], size: { width: number; height: number }) {
     const canvas = canvasRef.current;
@@ -154,6 +209,7 @@ export function RestoreImage() {
       if (!img) continue;
       ctx.drawImage(img, row.x, row.y, row.w, row.h);
     }
+    paintBoxCanvas(data, size);
   }
 
   /** Alt+hover 单图层预览。 */
@@ -168,6 +224,7 @@ export function RestoreImage() {
     if (!ctx) return;
     ctx.clearRect(0, 0, psdSize.width, psdSize.height);
     ctx.drawImage(img, row.x, row.y, row.w, row.h);
+    paintBoxCanvas([row], psdSize);
   }
 
   /** 加载图片并绘制 canvas（文件夹或 CSV 变化时调用）。 */
@@ -286,9 +343,30 @@ export function RestoreImage() {
     setAssetsData((prev) => prev.map((row) => row.key === key ? { ...row, ...patch } : row));
   }
 
-  function handleXYChange(key: string, field: "x" | "y", value: number | null) {
+  /** 编辑有效 x/y 时，ax 与 x（ay 与 y）同步联动：变化量相同 */
+  function handlePosChange(key: string, axis: "x" | "y", value: number | null) {
     if (value === null) return;
-    const newData = assetsData.map((row) => row.key === key ? { ...row, [field]: value } : row);
+    const row = assetsData.find((r) => r.key === key);
+    if (!row) return;
+
+    let patch: Partial<AssetRow>;
+    if (axis === "x") {
+      if (row.ax != null) {
+        const delta = value - row.ax;
+        patch = { ax: value, x: row.x + delta };
+      } else {
+        patch = { x: value };
+      }
+    } else {
+      if (row.ay != null) {
+        const delta = value - row.ay;
+        patch = { ay: value, y: row.y + delta };
+      } else {
+        patch = { y: value };
+      }
+    }
+
+    const newData = assetsData.map((r) => r.key === key ? { ...r, ...patch } : r);
     setAssetsData(newData);
     if (psdSize) redrawCanvas(newData, psdSize);
   }
@@ -298,11 +376,12 @@ export function RestoreImage() {
   async function handleExportCsv() {
     if (!psdSize || assetsData.length === 0) return;
     const header = `${psdSize.width},${psdSize.height}`;
-    const colNames = "layer_name,x,y,w,h,layer_type,layer_type_index,psd_layer_info,layer_asset";
+    const colNames = "layer_name,x,y,w,h,ax,ay,awidth,aheight,layer_type,layer_type_index,psd_layer_info,layer_asset";
     const rows = assetsData.map((r) =>
       [
         csvField(r.layer_name),
         r.x, r.y, r.w, r.h,
+        r.ax ?? "", r.ay ?? "", r.awidth ?? "", r.aheight ?? "",
         csvField(r.layer_type),
         LAYER_TYPE_INDEX_MAP[r.layer_type] ?? "",
         csvField(r.psd_layer_info),
@@ -359,34 +438,42 @@ export function RestoreImage() {
     },
     {
       title: "x",
-      dataIndex: "x",
       key: "x",
       width: 84,
-      render: (val: number, row) => (
+      render: (_: unknown, row: AssetRow) => (
         <InputNumber
           size="small"
-          value={val}
+          value={row.ax != null ? row.ax : row.x}
           style={{ width: 72 }}
-          onChange={(v) => handleXYChange(row.key, "x", v)}
+          onChange={(v) => handlePosChange(row.key, "x", v)}
         />
       ),
     },
     {
       title: "y",
-      dataIndex: "y",
       key: "y",
       width: 84,
-      render: (val: number, row) => (
+      render: (_: unknown, row: AssetRow) => (
         <InputNumber
           size="small"
-          value={val}
+          value={row.ay != null ? row.ay : row.y}
           style={{ width: 72 }}
-          onChange={(v) => handleXYChange(row.key, "y", v)}
+          onChange={(v) => handlePosChange(row.key, "y", v)}
         />
       ),
     },
-    { title: "w", dataIndex: "w", key: "w", width: 72 },
-    { title: "h", dataIndex: "h", key: "h", width: 72 },
+    {
+      title: "w",
+      key: "w",
+      width: 72,
+      render: (_: unknown, row: AssetRow) => row.awidth != null ? row.awidth : row.w,
+    },
+    {
+      title: "h",
+      key: "h",
+      width: 72,
+      render: (_: unknown, row: AssetRow) => row.aheight != null ? row.aheight : row.h,
+    },
     {
       title: "layer_type",
       dataIndex: "layer_type",
@@ -515,7 +602,10 @@ export function RestoreImage() {
         <Splitter.Panel min="20%">
           <div className="ri-right">
             {canvasReady ? (
-              <canvas ref={canvasRef} className="ri-canvas" />
+              <div className="ri-canvas-wrap">
+                <canvas ref={canvasRef} className="ri-canvas" />
+                <canvas ref={boxCanvasRef} className="ri-box-canvas" />
+              </div>
             ) : (
               <Empty description="请先选择 assets 文件夹和 csv 标注文件" />
             )}

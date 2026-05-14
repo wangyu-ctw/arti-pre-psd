@@ -214,6 +214,12 @@ type AnnotatorStore = {
    * - 若 isUndo=true（从 undo 流程中调用），跳过入栈，只同步数据
    */
   updateFromPsdOp: (data: PsdInfoPayload, isUndo?: boolean) => void;
+
+  /**
+   * 将修正后的边框信息（ax/ay/awidth/aheight）写回 psdData.layers 中对应节点。
+   * 纯前端操作，不涉及 Python 端，不入历史栈。
+   */
+  updateLayerArea: (updatedNode: PsdLayerNode) => void;
 };
 
 // ─── 创建 store ───────────────────────────────────────────────────────────
@@ -383,6 +389,19 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
 
   setLayerPreview: (data) => set({ layerPreview: data }),
   clearLayerPreview: () => set({ layerPreview: null }),
+
+  updateLayerArea: (updatedNode) =>
+    set((s) => {
+      if (!s.psdData) return {};
+      const patch = (nodes: PsdLayerNode[]): PsdLayerNode[] =>
+        nodes.map((n) => {
+          if (n.id === updatedNode.id) {
+            return { ...n, ax: updatedNode.ax, ay: updatedNode.ay, awidth: updatedNode.awidth, aheight: updatedNode.aheight };
+          }
+          return n.children ? { ...n, children: patch(n.children) } : n;
+        });
+      return { psdData: { ...s.psdData, layers: patch(s.psdData.layers) } };
+    }),
 
   setCanvasSelectMode: (mode) => set({ canvasSelectMode: mode }),
 

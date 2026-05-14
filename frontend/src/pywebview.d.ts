@@ -55,6 +55,10 @@ export interface PsdLayerNode {
   y: number;
   width: number;
   height: number;
+  ax?: number;
+  ay?: number;
+  awidth?: number;
+  aheight?: number;
   visible: boolean;
   isGroup: boolean;
   children?: PsdLayerNode[];

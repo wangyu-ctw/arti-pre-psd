@@ -20,6 +20,7 @@ import { getApi } from "../../api";
 import { useAnnotatorStore } from "../../store/annotatorStore";
 import { LAYER_TYPE_MAP, LAYER_TYPE_OPTIONS, layerTypeLabel } from "../../utils/config";
 import { LayerSliceModal, type SliceItem } from "./LayerSliceModal";
+import { AdjustLayerAreaModal } from "./AdjustLayerAreaModal";
 import "./PsdLayerPanel.css";
 
 const DEFAULT_STATE = { eyeOn: true, type: "", selected: false };
@@ -84,6 +85,7 @@ const LayerNode = React.memo(function LayerNode({
   collapsedIds,
   setCollapsedIds,
   onSlice,
+  onAdjust,
 }: {
   node: PsdLayerNode;
   depth: number;
@@ -91,6 +93,7 @@ const LayerNode = React.memo(function LayerNode({
   collapsedIds: Set<string>;
   setCollapsedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   onSlice: (sid: number, nodeId: string) => void;
+  onAdjust: (sid: number, nodeId: string) => void;
 }) {
   // 精确订阅：只有本节点的 state 改变才触发重渲染
   const state = useAnnotatorStore((s) => s.layerStates[node.id]) ?? DEFAULT_STATE;
@@ -106,19 +109,15 @@ const LayerNode = React.memo(function LayerNode({
     .filter(Boolean)
     .join(" ");
 
-  // 通过 ref 引用 onSlice，避免加入 useMemo 依赖导致不必要的重算
+  // 通过 ref 引用回调，避免加入 useMemo 依赖导致不必要的重算
   const onSliceRef = useRef(onSlice);
   onSliceRef.current = onSlice;
+  const onAdjustRef = useRef(onAdjust);
+  onAdjustRef.current = onAdjust;
 
   // 右键菜单。只在 node.id / node.isGroup 变化时重算（实际上从不变化）
   const contextMenuItems = useMemo<MenuProps["items"]>(() => {
     const store = () => useAnnotatorStore.getState();
-    const sliceItem = {
-      key: "slice",
-      label: "切分图层",
-      disabled: node.psdSid == null,
-      onClick: () => { if (node.psdSid != null) onSliceRef.current(node.psdSid, node.id); },
-    };
     if (node.isGroup) {
       return [
         {
@@ -175,7 +174,6 @@ const LayerNode = React.memo(function LayerNode({
             }
           },
         },
-        sliceItem,
         { type: "divider" as const },
         {
           key: "delete",
@@ -186,7 +184,18 @@ const LayerNode = React.memo(function LayerNode({
       ];
     }
     return [
-      sliceItem,
+      {
+        key: "slice",
+        label: "切分图层",
+        disabled: node.psdSid == null,
+        onClick: () => { if (node.psdSid != null) onSliceRef.current(node.psdSid, node.id); },
+      },
+      {
+        key: "adjust",
+        label: "修正边框",
+        disabled: node.psdSid == null,
+        onClick: () => { if (node.psdSid != null) onAdjustRef.current(node.psdSid, node.id); },
+      },
       {
         key: "delete",
         label: "删除此图层",
@@ -296,7 +305,7 @@ const LayerNode = React.memo(function LayerNode({
                 key={field}
                 size="small"
                 className="layer-node__coord-input"
-                value={node[field]}
+                value={node[`a${field}`]!== undefined ? node[`a${field}`] : node[field]}
                 prefix={
                   <span className="layer-node__coord-prefix">
                     {field === "width" ? "w" : field === "height" ? "h" : field}
@@ -333,6 +342,7 @@ const LayerNode = React.memo(function LayerNode({
         collapsedIds={collapsedIds}
         setCollapsedIds={setCollapsedIds}
         onSlice={onSlice}
+        onAdjust={onAdjust}
       />
     )}
   </>
@@ -347,6 +357,7 @@ const LayerTree = React.memo(function LayerTree({
   collapsedIds,
   setCollapsedIds,
   onSlice,
+  onAdjust,
 }: {
   nodes: PsdLayerNode[];
   depth: number;
@@ -354,6 +365,7 @@ const LayerTree = React.memo(function LayerTree({
   collapsedIds: Set<string>;
   setCollapsedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   onSlice: (sid: number, nodeId: string) => void;
+  onAdjust: (sid: number, nodeId: string) => void;
 }) {
   return (
     <>
@@ -366,6 +378,7 @@ const LayerTree = React.memo(function LayerTree({
           collapsedIds={collapsedIds}
           setCollapsedIds={setCollapsedIds}
           onSlice={onSlice}
+          onAdjust={onAdjust}
         />
       ))}
     </>
@@ -396,6 +409,10 @@ export function PsdLayerPanel() {
   const [sliceImageB64, setSliceImageB64] = useState("");
   const [sliceNodeId, setSliceNodeId] = useState("");
 
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustImageB64, setAdjustImageB64] = useState("");
+  const [adjustNode, setAdjustNode] = useState<PsdLayerNode | null>(null);
+
   const handleSlice = useCallback(async (sid: number, nodeId: string) => {
     try {
       const api = await getApi();
@@ -410,6 +427,38 @@ export function PsdLayerPanel() {
     } catch (e) {
       message.error(String(e));
     }
+  }, []);
+
+  const handleAdjust = useCallback(async (sid: number, nodeId: string) => {
+    try {
+      // 从 store 实时读取最新 node，避免右键菜单闭包持有旧的 ax/ay 快照
+      const layers = useAnnotatorStore.getState().psdData?.layers ?? [];
+      const findNode = (nodes: PsdLayerNode[]): PsdLayerNode | null => {
+        for (const n of nodes) {
+          if (n.id === nodeId) return n;
+          if (n.children) { const found = findNode(n.children); if (found) return found; }
+        }
+        return null;
+      };
+      const latestNode = findNode(layers);
+      if (!latestNode) return;
+
+      const api = await getApi();
+      const r = await api.psd_get_layer_preview(sid);
+      if (!r.ok || !r.data) {
+        message.error(r.error ?? "获取图层预览失败");
+        return;
+      }
+      setAdjustImageB64(r.data.previewB64);
+      setAdjustNode(latestNode);
+      setAdjustOpen(true);
+    } catch (e) {
+      message.error(String(e));
+    }
+  }, []);
+
+  const handleAdjustLayerArea = useCallback((updatedNode: PsdLayerNode) => {
+    useAnnotatorStore.getState().updateLayerArea(updatedNode);
   }, []);
 
   const ancestorIdsByNodeId = useMemo(() => {
@@ -642,6 +691,7 @@ export function PsdLayerPanel() {
           collapsedIds={collapsedIds}
           setCollapsedIds={setCollapsedIds}
           onSlice={handleSlice}
+          onAdjust={handleAdjust}
         />
         {structuralLoading && (
           <div className="plp-loading-overlay">
@@ -655,6 +705,14 @@ export function PsdLayerPanel() {
         imageB64={sliceImageB64}
         onClose={() => setSliceOpen(false)}
         onCropConfirm={handleSliceConfirm}
+      />
+
+      <AdjustLayerAreaModal
+        open={adjustOpen}
+        node={adjustNode}
+        imageB64={adjustImageB64}
+        onClose={() => setAdjustOpen(false)}
+        onAdjustLayerArea={handleAdjustLayerArea}
       />
     </Flex>
   );

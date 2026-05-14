@@ -1211,14 +1211,22 @@ class PsdSession:
                 layer_type_index = str(_LAYER_TYPE_INDEX_MAP.get(layer_type, ""))
                 layer_info = json.dumps({"layer_name": name}, ensure_ascii=False)
                 escaped_info = '"' + layer_info.replace('"', '""') + '"'
+
+                def _area(s: dict, key: str) -> str:
+                    v = s.get(key)
+                    return "" if v is None else str(int(v))
+
+                st = state if isinstance(state, dict) else {}
                 csv_rows.append(
-                    f"{_csv_field(name)},{node['x']},{node['y']},{node['width']},{node['height']},{layer_type},{layer_type_index},{escaped_info},{_csv_field(filename)}"
+                    f"{_csv_field(name)},{node['x']},{node['y']},{node['width']},{node['height']},"
+                    f"{_area(st, 'ax')},{_area(st, 'ay')},{_area(st, 'awidth')},{_area(st, 'aheight')},"
+                    f"{layer_type},{layer_type_index},{escaped_info},{_csv_field(filename)}"
                 )
 
         _walk(self._current_tree)
 
         header = f"{self._psd.width},{self._psd.height}"
-        col_names = "layer_name,x,y,w,h,layer_type,layer_type_index,psd_layer_info,layer_asset"
+        col_names = "layer_name,x,y,w,h,ax,ay,awidth,aheight,layer_type,layer_type_index,psd_layer_info,layer_asset"
         csv_content = "\n".join([header, col_names] + csv_rows)
         return csv_content, slices
 

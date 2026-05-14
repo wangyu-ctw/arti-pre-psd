@@ -16,6 +16,14 @@ interface ImgRect {
   height: number;
 }
 
+/** 有修正边框时取 ax/ay/awidth/aheight，否则取原始 x/y/width/height */
+function effectiveBounds(node: PsdLayerNode) {
+  if (node.ax != null && node.ay != null && node.awidth != null && node.aheight != null) {
+    return { x: node.ax, y: node.ay, width: node.awidth, height: node.aheight };
+  }
+  return { x: node.x, y: node.y, width: node.width, height: node.height };
+}
+
 function flattenNodes(nodes: PsdLayerNode[]): PsdLayerNode[] {
   const result: PsdLayerNode[] = [];
   const walk = (list: PsdLayerNode[]) => {
@@ -94,11 +102,12 @@ export function PsdPreviewCanvas() {
         : DEFAULT_BOX_COLOR;
       ctx.strokeStyle = color;
 
-      // 原始坐标（canvas 像素空间）
-      const rawL = node.x * scaleX;
-      const rawT = node.y * scaleY;
-      const rawR = (node.x + node.width) * scaleX;
-      const rawB = (node.y + node.height) * scaleY;
+      // 优先使用修正边框，无则用原始坐标（canvas 像素空间）
+      const { x: bx, y: by, width: bw, height: bh } = effectiveBounds(node);
+      const rawL = bx * scaleX;
+      const rawT = by * scaleY;
+      const rawR = (bx + bw) * scaleX;
+      const rawB = (by + bh) * scaleY;
 
       // 贴边时往内缩（保证描边不被画布裁掉）
       const l = rawL < MARGIN ? MARGIN : rawL;
@@ -211,7 +220,8 @@ export function PsdPreviewCanvas() {
     const allNodes = flattenNodes(psdData.layers);
     const hitNodes = allNodes.filter((n) => {
       if (layerStates[n.id]?.eyeOn === false) return false;
-      return coord.x >= n.x && coord.x <= n.x + n.width && coord.y >= n.y && coord.y <= n.y + n.height;
+      const { x: bx, y: by, width: bw, height: bh } = effectiveBounds(n);
+      return coord.x >= bx && coord.x <= bx + bw && coord.y >= by && coord.y <= by + bh;
     });
 
     if (hitNodes.length === 0) { useAnnotatorStore.getState().clearSelection(); return; }
@@ -247,7 +257,8 @@ export function PsdPreviewCanvas() {
     const allNodes = flattenNodes(psdData.layers);
     const isHit = (n: PsdLayerNode) => {
       if (layerStates[n.id]?.eyeOn === false) return false;
-      return coord.x >= n.x && coord.x <= n.x + n.width && coord.y >= n.y && coord.y <= n.y + n.height;
+      const { x: bx, y: by, width: bw, height: bh } = effectiveBounds(n);
+      return coord.x >= bx && coord.x <= bx + bw && coord.y >= by && coord.y <= by + bh;
     };
     // 优先叶子节点，无叶子时回退到群组节点
     const hit = allNodes.find((n) => !n.isGroup && isHit(n)) ?? allNodes.find(isHit);

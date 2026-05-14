@@ -334,11 +334,15 @@ export function AnnotatorWorkspace() {
       const layerInfo = JSON.stringify({ layer_name: node.name });
       const escapedInfo = `"${layerInfo.replace(/"/g, '""')}"`;
       const assetFilename = safeFilename(node.name, counter);
-      rows.push(`${csvField(node.name)},${node.x},${node.y},${node.width},${node.height},${type},${typeIndex},${escapedInfo},${csvField(assetFilename)}`);
+      const ax = node.ax ?? "";
+      const ay = node.ay ?? "";
+      const aw = node.awidth ?? "";
+      const ah = node.aheight ?? "";
+      rows.push(`${csvField(node.name)},${node.x},${node.y},${node.width},${node.height},${ax},${ay},${aw},${ah},${type},${typeIndex},${escapedInfo},${csvField(assetFilename)}`);
     }
     if (rows.length === 0) return "";
     const header = `${pd.psdWidth},${pd.psdHeight}`;
-    return [header, "layer_name,x,y,w,h,layer_type,layer_type_index,psd_layer_info,layer_asset", ...rows].join("\n");
+    return [header, "layer_name,x,y,w,h,ax,ay,awidth,aheight,layer_type,layer_type_index,psd_layer_info,layer_asset", ...rows].join("\n");
   }
 
   async function handleExportZip() {
@@ -348,7 +352,19 @@ export function AnnotatorWorkspace() {
     const suggested = baseName.replace(/\.psd$/i, "") + "_annotated";
     try {
       const api = await getApi();
-      const r = await api.save_zip(JSON.stringify(layerStates), suggested);
+      // 将 ax/ay/awidth/aheight 从节点树附加到各节点的 state，供后端 CSV 写入
+      const enriched: Record<string, object> = {};
+      for (const node of flattenNodes(pd.layers)) {
+        const s = layerStates[node.id] ?? { eyeOn: true, type: "", selected: false };
+        enriched[node.id] = {
+          ...s,
+          ...(node.ax != null ? { ax: node.ax } : {}),
+          ...(node.ay != null ? { ay: node.ay } : {}),
+          ...(node.awidth != null ? { awidth: node.awidth } : {}),
+          ...(node.aheight != null ? { aheight: node.aheight } : {}),
+        };
+      }
+      const r = await api.save_zip(JSON.stringify(enriched), suggested);
       if (!r.ok && r.error !== "用户取消") message.error(r.error ?? "保存失败");
       else if (r.ok) showSavedMessage(r.data?.path ?? "");
     } catch (e) {
@@ -385,27 +401,48 @@ export function AnnotatorWorkspace() {
 
       const lines = r.data!.content.split(/\r?\n/);
       // 第0行：PSD宽高；第1行：列头；第2行起：数据
+      if (lines.length < 2) return;
+
+      // 解析表头，建立字段名 → 列索引映射
+      const headers = parseCsvLine(lines[1]);
+      const fi: Record<string, number> = {};
+      headers.forEach((name, i) => { fi[name.trim()] = i; });
+      const str = (cols: string[], name: string) => cols[fi[name]]?.trim() ?? "";
+      const optNum = (cols: string[], name: string): number | undefined => {
+        const v = str(cols, name);
+        return v !== "" ? Number(v) : undefined;
+      };
+
       const dataLines = lines.slice(2).filter((l) => l.trim());
-      // 构建 name → nodeId[] 索引（同名图层可能多个）
-      const nameToIds: Record<string, string[]> = {};
+
+      // 构建 name → node[] 索引（同名图层可能多个）
+      const nameToNodes: Record<string, PsdLayerNode[]> = {};
       for (const node of flattenNodes(pd.layers)) {
         if (node.isGroup) continue;
-        if (!nameToIds[node.name]) nameToIds[node.name] = [];
-        nameToIds[node.name].push(node.id);
+        if (!nameToNodes[node.name]) nameToNodes[node.name] = [];
+        nameToNodes[node.name].push(node);
       }
 
       let matched = 0;
-      const { setType } = useAnnotatorStore.getState();
+      const { setType, updateLayerArea } = useAnnotatorStore.getState();
       for (const line of dataLines) {
         const cols = parseCsvLine(line);
-        const layerName = cols[0]?.trim() ?? "";
-        const layerType = cols[5]?.trim() ?? "";
+        const layerName = str(cols, "layer_name");
+        const layerType = str(cols, "layer_type");
         if (!layerName) continue;
 
-        const ids = nameToIds[layerName];
-        if (!ids) continue;
-        for (const id of ids) {
-          setType(id, layerType);
+        const nodes = nameToNodes[layerName];
+        if (!nodes) continue;
+        for (const node of nodes) {
+          setType(node.id, layerType);
+          // 恢复修正边框（有值才写，无值不覆盖原有数据）
+          const ax = optNum(cols, "ax");
+          const ay = optNum(cols, "ay");
+          const awidth = optNum(cols, "awidth");
+          const aheight = optNum(cols, "aheight");
+          if (ax != null || ay != null || awidth != null || aheight != null) {
+            updateLayerArea({ ...node, ax, ay, awidth, aheight });
+          }
           matched++;
         }
       }
