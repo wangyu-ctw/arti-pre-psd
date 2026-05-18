@@ -224,7 +224,11 @@ export function PsdPreviewCanvas() {
       return coord.x >= bx && coord.x <= bx + bw && coord.y >= by && coord.y <= by + bh;
     });
 
-    if (hitNodes.length === 0) { useAnnotatorStore.getState().clearSelection(); return; }
+    const appendSelection = e.metaKey || e.ctrlKey;
+    if (hitNodes.length === 0) {
+      if (!appendSelection) useAnnotatorStore.getState().clearSelection();
+      return;
+    }
 
     // 优先叶子节点，无叶子时回退到群组节点
     const leafHits = hitNodes.filter((n) => !n.isGroup);
@@ -244,7 +248,7 @@ export function PsdPreviewCanvas() {
       hitIds = hitNodes.map((n) => n.id);
     }
 
-    useAnnotatorStore.getState().selectByIds(hitIds);
+    useAnnotatorStore.getState().selectByIds(hitIds, appendSelection);
   }
 
   function handleCanvasMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {

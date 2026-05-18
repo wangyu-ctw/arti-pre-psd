@@ -29,6 +29,68 @@ function flattenNodes(nodes: PsdLayerNode[]): PsdLayerNode[] {
   return result;
 }
 
+type LayerArea = Pick<PsdLayerNode, "ax" | "ay" | "awidth" | "aheight">;
+
+function getLayerArea(node: PsdLayerNode): LayerArea | null {
+  if (
+    node.ax == null &&
+    node.ay == null &&
+    node.awidth == null &&
+    node.aheight == null
+  ) {
+    return null;
+  }
+  return {
+    ax: node.ax,
+    ay: node.ay,
+    awidth: node.awidth,
+    aheight: node.aheight,
+  };
+}
+
+function layerFingerprint(node: PsdLayerNode): string {
+  return [
+    node.name,
+    node.x,
+    node.y,
+    node.width,
+    node.height,
+    node.isGroup ? "group" : "layer",
+  ].join("\u0000");
+}
+
+function adjustedAreaKey(node: PsdLayerNode): string {
+  return `${node.psdSid != null ? `sid:${node.psdSid}` : `id:${node.id}`}\u0000${layerFingerprint(node)}`;
+}
+
+function preserveAdjustedAreas(
+  nextLayers: PsdLayerNode[],
+  previousLayers: PsdLayerNode[] | undefined,
+): PsdLayerNode[] {
+  if (!previousLayers) return nextLayers;
+
+  const previousAreas = new Map<string, LayerArea>();
+  for (const node of flattenNodes(previousLayers)) {
+    const area = getLayerArea(node);
+    if (area) previousAreas.set(adjustedAreaKey(node), area);
+  }
+  if (previousAreas.size === 0) return nextLayers;
+
+  const patch = (nodes: PsdLayerNode[]): PsdLayerNode[] =>
+    nodes.map((node) => {
+      const preservedArea = previousAreas.get(adjustedAreaKey(node));
+      const children = node.children ? patch(node.children) : undefined;
+      if (!preservedArea && !children) return node;
+      return {
+        ...node,
+        ...(children ? { children } : {}),
+        ...(preservedArea ?? {}),
+      };
+    });
+
+  return patch(nextLayers);
+}
+
 function removeFromTree(nodes: PsdLayerNode[], ids: Set<string>): PsdLayerNode[] {
   return nodes
     .filter((n) => !ids.has(n.id))
@@ -163,7 +225,7 @@ type AnnotatorStore = {
   selectNode: (id: string, metaOrCtrl: boolean, shift: boolean) => void;
 
   /** canvas 点击批量选中：只改实际需要变化的节点，scrollToId = ids[0] */
-  selectByIds: (ids: string[]) => void;
+  selectByIds: (ids: string[], append?: boolean) => void;
 
   /** 清空所有 selected（点击空白时） */
   clearSelection: () => void;
@@ -236,7 +298,12 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
   layerPreview: null,
 
   loadPsdData: (data) => {
-    const normalized = { ...data, layers: reverseLayersDeep(data.layers) };
+    const s = get();
+    const normalizedLayers = reverseLayersDeep(data.layers);
+    const normalized = {
+      ...data,
+      layers: preserveAdjustedAreas(normalizedLayers, s.psdData?.layers),
+    };
     const states: Record<string, LayerState> = {};
     for (const n of flattenNodes(normalized.layers)) {
       states[n.id] = { eyeOn: true, type: "", selected: false };
@@ -318,7 +385,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
       return changed ? { layerStates: next, scrollToId: id } : { scrollToId: id };
     }),
 
-  selectByIds: (ids) =>
+  selectByIds: (ids, append = false) =>
     set((s) => {
       const hitSet = new Set(ids);
       const prev = s.layerStates;
@@ -326,7 +393,7 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
       const next: typeof prev = {};
       for (const k of Object.keys(prev)) {
         const st = prev[k];
-        const should = hitSet.has(k);
+        const should = append ? st.selected || hitSet.has(k) : hitSet.has(k);
         if (st.selected !== should) {
           next[k] = { ...st, selected: should };
           changed = true;
@@ -462,8 +529,10 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
     const hasPsdChange = snapshot.hasPsdChange ?? false;
     _skipHistory = true;
     if (hasPsdChange) {
-      // 结构性操作：只恢复 layerStates（layers/缩略图由后续 psd_undo() 返回值更新）
+      // 结构性操作：先恢复前端快照里的 layers，保留修正边框；
+      // 缩略图与最终树随后由 psd_undo() 返回值同步覆盖。
       set({
+        psdData: s.psdData ? { ...s.psdData, layers: snapshot.layers } : null,
         layerStates: snapshot.layerStates,
         history: s.history.slice(0, -1),
         pendingDeleteState: null,
@@ -484,7 +553,11 @@ export const useAnnotatorStore = create<AnnotatorStore>((set, get) => ({
     const s = get();
     if (!s.psdData) return;
 
-    const normalized = { ...data, layers: reverseLayersDeep(data.layers) };
+    const normalizedLayers = reverseLayersDeep(data.layers);
+    const normalized = {
+      ...data,
+      layers: preserveAdjustedAreas(normalizedLayers, s.psdData.layers),
+    };
     const newLayerStates: Record<string, LayerState> = {};
 
     if (isUndo) {

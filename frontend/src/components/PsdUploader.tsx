@@ -43,7 +43,7 @@ export function PsdUploader() {
   const setPsStatus = useAppStore((s) => s.setPsStatus);
   const initQueue = useAppStore((s) => s.initQueue);
   const appendQueue = useAppStore((s) => s.appendQueue);
-  const setQueue = useAppStore((s) => s.setQueue);
+  const updateQueueItem = useAppStore((s) => s.updateQueueItem);
   const cancelQueueItem = useAppStore((s) => s.cancelQueueItem);
   const resetPreprocess = useAppStore((s) => s.resetPreprocess);
   const requestSetAnnotatingFile = useAppStore((s) => s.requestSetAnnotatingFile);
@@ -123,26 +123,39 @@ export function PsdUploader() {
           return;
         }
 
-        let workQueue = useAppStore.getState().queue.slice();
+        const workQueue = useAppStore.getState().queue.slice();
         const startIdx = workQueue.findIndex((it) => it.status === "queued");
         for (let i = startIdx < 0 ? 0 : startIdx; i < workQueue.length; i++) {
-          workQueue[i] = { ...workQueue[i], status: "running", error: undefined, result: undefined };
-          setQueue(workQueue.slice());
-
-          const proc = await api.process_psd(workQueue[i].pick.path, true);
-          if (!proc.ok || !proc.data) {
-            workQueue[i] = { ...workQueue[i], status: "failed", error: proc.error ?? "处理失败" };
-          } else {
-            workQueue[i] = {
-              ...workQueue[i],
-              status: proc.data.step_errors ? "warning" : "success",
-              result: proc.data,
-            };
+          const currentItem = useAppStore
+            .getState()
+            .queue
+            .find((it) => it.id === workQueue[i].id);
+          if (!currentItem || currentItem.status !== "queued") {
+            continue;
           }
-          setQueue(workQueue.slice());
+
+          updateQueueItem(currentItem.id, { status: "running", error: undefined, result: undefined });
+
+          const proc = await api.process_psd(currentItem.pick.path, true);
+          const stillInQueue = useAppStore
+            .getState()
+            .queue
+            .some((it) => it.id === currentItem.id);
+          if (!stillInQueue) continue;
+
+          updateQueueItem(
+            currentItem.id,
+            !proc.ok || !proc.data
+              ? { status: "failed", error: proc.error ?? "处理失败" }
+              : {
+                  status: proc.data.step_errors ? "warning" : "success",
+                  result: proc.data,
+                },
+          );
         }
 
-        const hasNonFailed = workQueue.some(
+        const finalQueue = useAppStore.getState().queue;
+        const hasNonFailed = finalQueue.some(
           (it) => it.status === "success" || it.status === "warning",
         );
         setStage(hasNonFailed ? "success" : "failure");
