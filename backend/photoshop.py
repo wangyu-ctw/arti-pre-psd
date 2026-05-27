@@ -25,6 +25,7 @@ SCRIPT_FLATTEN_FX = _SCRIPTS_DIR / "Flatten All Layer Effects.jsx"
 SCRIPT_FLATTEN_GROUPS_WITH_FX = _SCRIPTS_DIR / "flattenGroupsWithEffects.jsx"
 SCRIPT_FLATTEN_MASKS = _SCRIPTS_DIR / "Flatten All Masks.jsx"
 SCRIPT_FLATTEN_CLIPPING_MASKS = _SCRIPTS_DIR / "flattenClippingMasks.jsx"
+SCRIPT_FLATTEN_MASKS_IN_SETS = _SCRIPTS_DIR / "flatten masks in layer sets.jsx"
 SCRIPT_ORGANIZE_GROUPS = _SCRIPTS_DIR / "organizeLayerGroups.jsx"
 SCRIPT_UNIQUE_LAYER_NAMES = _SCRIPTS_DIR / "uniqueLayerNames.jsx"
 SCRIPT_TRIM_TO_CANVAS = _SCRIPTS_DIR / "trimLayersToCanvas.jsx"
@@ -48,10 +49,11 @@ _PROCESS_STEPS: list[tuple[str, Path]] = [
     ("5. Flatten Groups With Effects",     SCRIPT_FLATTEN_GROUPS_WITH_FX),
     ("6. Flatten All Masks",               SCRIPT_FLATTEN_MASKS),
     ("7. Flatten Clipping Masks",          SCRIPT_FLATTEN_CLIPPING_MASKS),
-    ("8. Trim Layers To Canvas",           SCRIPT_TRIM_TO_CANVAS),
+    ("8. Flatten Masks in Layer Sets",    SCRIPT_FLATTEN_MASKS_IN_SETS),
+    ("9. Trim Layers To Canvas",          SCRIPT_TRIM_TO_CANVAS),
     ("2b. Delete All Empty Layers (再跑)", SCRIPT_DELETE_EMPTY),
-    ("9. Organize Layer Groups",           SCRIPT_ORGANIZE_GROUPS),
-    ("10. Unique Layer Names",              SCRIPT_UNIQUE_LAYER_NAMES),
+    ("10. Organize Layer Groups",         SCRIPT_ORGANIZE_GROUPS),
+    ("11. Unique Layer Names",            SCRIPT_UNIQUE_LAYER_NAMES),
 ]
 
 

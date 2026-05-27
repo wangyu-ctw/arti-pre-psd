@@ -22,17 +22,18 @@
       │
       ▼ 顺序执行多个 ExtendScript（每步独立 osascript 调用，失败记录后继续）
 backend/psExtendScript/
-  1.  ungroupArtboards.jsx            # 取消所有画板编组，解锁后再取消，完成后清空选中
-  2.  Delete All Empty Layers.jsx     # 删空图层 + 删所有"有效不可见"图层（fork 增强）
-  3.  unlockAllLayersAndGroups.jsx    # 解锁全部图层/组；解锁前已隐藏的图层直接删除
-  4.  Flatten All Layer Effects.jsx   # 栅格化所有 ArtLayer 的图层样式，并栅格化智能对象
-  5.  flattenGroupsWithEffects.jsx    # 自身带 effects 的 LayerSet → 合并成单层
-  6.  Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（PS 自带）
-  7.  flattenClippingMasks.jsx        # Stamp Visible 策略：合并所有剪切蒙版组
-  8.  trimLayersToCanvas.jsx          # 裁掉画布外像素
-  2b. Delete All Empty Layers.jsx     # 再跑删空（清洗链产生的空壳）
-  9.  organizeLayerGroups.jsx         # 解散单子组
-  10. uniqueLayerNames.jsx            # 全文档图层/组名去重（_2、_3…）
+  1.  ungroupArtboards.jsx                    # 取消所有画板编组，解锁后再取消，完成后清空选中
+  2.  Delete All Empty Layers.jsx             # 删空图层 + 删所有"有效不可见"图层（fork 增强）
+  3.  unlockAllLayersAndGroups.jsx            # 解锁全部图层/组；解锁前已隐藏的图层直接删除
+  4.  Flatten All Layer Effects.jsx           # 栅格化所有 ArtLayer 的图层样式，并栅格化智能对象
+  5.  flattenGroupsWithEffects.jsx            # 自身带 effects 的 LayerSet → 合并成单层
+  6.  Flatten All Masks.jsx                   # 烧入图层蒙版到 alpha（PS 自带）
+  7.  flattenClippingMasks.jsx                # Stamp Visible 策略：合并所有剪切蒙版组
+  8.  flatten masks in layer sets.jsx         # 把图层组的矢量蒙版裁切到组内所有叶子层
+  9.  trimLayersToCanvas.jsx                  # 裁掉画布外像素
+  2b. Delete All Empty Layers.jsx             # 再跑删空（清洗链产生的空壳）
+  10. organizeLayerGroups.jsx                 # 解散单子组
+  11. uniqueLayerNames.jsx                    # 全文档图层/组名去重（_2、_3…）
   → saveAsClean.jsx                   # 另存为 [原名]_clean.psd
       │
       ▼ saveAsClean 末尾 IIFE return 路径
@@ -62,18 +63,19 @@ arti-pre-psd/
 │   ├── settings.py               # ~/.arti-pre-psd/settings.json 读写
 │   ├── psExtendScript/           # 跑在 Photoshop 里的 .jsx 脚本
 │   │   ├── README.md
-│   │   ├── ungroupArtboards.jsx              # 取消全部画板编组（步骤 1）
-│   │   ├── Delete All Empty Layers.jsx     # 删空图层/隐藏图层（步骤 2 & 2b）
-│   │   ├── unlockAllLayersAndGroups.jsx    # 解锁全部图层/组（步骤 3）
-│   │   ├── Flatten All Layer Effects.jsx   # 栅格化图层样式和智能对象（步骤 4）
-│   │   ├── flattenGroupsWithEffects.jsx    # 合并自身带 effects 的图层组（步骤 5）
-│   │   ├── Flatten All Masks.jsx           # 烧入图层蒙版到 alpha（步骤 6）
-│   │   ├── flattenClippingMasks.jsx        # Stamp Visible 合并剪切蒙版组（步骤 7）
-│   │   ├── deleteProblematicClipLayers.jsx # 删问题剪切/调整层（备用，当前不在主链中）
-│   │   ├── trimLayersToCanvas.jsx          # 裁掉图层超出画布部分（步骤 8）
-│   │   ├── organizeLayerGroups.jsx         # 解散单子组（步骤 9）
-│   │   ├── uniqueLayerNames.jsx            # 全文档图层与组名去重（步骤 10）
-│   │   └── saveAsClean.jsx                 # 另存为 [原名]_clean.psd
+│   │   ├── ungroupArtboards.jsx                  # 取消全部画板编组（步骤 1）
+│   │   ├── Delete All Empty Layers.jsx           # 删空图层/隐藏图层（步骤 2 & 2b）
+│   │   ├── unlockAllLayersAndGroups.jsx          # 解锁全部图层/组（步骤 3）
+│   │   ├── Flatten All Layer Effects.jsx         # 栅格化图层样式和智能对象（步骤 4）
+│   │   ├── flattenGroupsWithEffects.jsx          # 合并自身带 effects 的图层组（步骤 5）
+│   │   ├── Flatten All Masks.jsx                 # 烧入图层蒙版到 alpha（步骤 6）
+│   │   ├── flattenClippingMasks.jsx              # Stamp Visible 合并剪切蒙版组（步骤 7）
+│   │   ├── flatten masks in layer sets.jsx       # 把图层组矢量蒙版裁切到组内叶子层（步骤 8）
+│   │   ├── deleteProblematicClipLayers.jsx       # 删问题剪切/调整层（备用，当前不在主链中）
+│   │   ├── trimLayersToCanvas.jsx                # 裁掉图层超出画布部分（步骤 9）
+│   │   ├── organizeLayerGroups.jsx               # 解散单子组（步骤 10）
+│   │   ├── uniqueLayerNames.jsx                  # 全文档图层与组名去重（步骤 11）
+│   │   └── saveAsClean.jsx                       # 另存为 [原名]_clean.psd
 │   ├── requirements.txt          # 仅保留 pywebview / watchdog / psd-tools（备用）
 │   └── __init__.py
 ├── frontend/
