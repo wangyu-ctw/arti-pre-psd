@@ -1,30 +1,25 @@
-// flatten_masks_final.jsx — 递归传递蒙版版本
+// flatten_masks_final.jsx — 最终版，无弹窗，支持矢量蒙版和像素蒙版，PS 27.4 验证
 #target photoshop
 (function () {
     var doc = app.activeDocument;
-    if (!doc) { return; }
+    if (!doc) return;
 
     var savedUnits = app.preferences.rulerUnits;
     app.preferences.rulerUnits = Units.PIXELS;
-    var count = 0;
 
-    function hasVMask(layerId) {
-        try {
-            var ref = new ActionReference();
-            ref.putIdentifier(charIDToTypeID("Lyr "), layerId);
-            return executeActionGet(ref).hasKey(stringIDToTypeID("vectorMaskEnabled"));
-        } catch(e) { return false; }
+    function getMaskType(layer) {
+        var ref = new ActionReference();
+        ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
+        var d = executeActionGet(ref);
+        return {
+            vector: d.hasKey(stringIDToTypeID("vectorMaskEnabled")) &&
+                    d.getBoolean(stringIDToTypeID("vectorMaskEnabled")),
+            pixel:  d.hasKey(stringIDToTypeID("userMaskEnabled")) &&
+                    d.getBoolean(stringIDToTypeID("userMaskEnabled"))
+        };
     }
 
-    function getLayerKind(layer) {
-        try {
-            var ref = new ActionReference();
-            ref.putIdentifier(charIDToTypeID("Lyr "), layer.id);
-            return executeActionGet(ref).getInteger(stringIDToTypeID("layerKind"));
-        } catch(e) { return -1; }
-    }
-
-    function storeVMaskAsChannel(group) {
+    function storeVectorMaskAsChannel(group) {
         doc.activeLayer = group;
         var paths = doc.pathItems;
         if (paths.length === 0) return null;
@@ -36,7 +31,7 @@
             }
         }
         try { vmPath.makeSelection(0, false, SelectionType.REPLACE); }
-        catch(e) { $.writeln("  makeSelection 失败: " + e.message); return null; }
+        catch(e) { return null; }
         var ch = doc.channels.add();
         ch.name = "__vm__";
         doc.selection.store(ch);
@@ -44,78 +39,114 @@
         return ch;
     }
 
-    // 对单个叶子层（非 group）应用通道蒙版：载入→反选→clear
+    function storePixelMaskAsChannel(group) {
+        doc.activeLayer = group;
+        try {
+            var selD = new ActionDescriptor();
+            var selR = new ActionReference();
+            selR.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
+            selD.putReference(charIDToTypeID("null"), selR);
+            selD.putBoolean(charIDToTypeID("MkVs"), false);
+            executeAction(charIDToTypeID("slct"), selD, DialogModes.NO);
+
+            doc.selection.selectAll();
+            executeAction(charIDToTypeID("copy"), undefined, DialogModes.NO);
+            doc.selection.deselect();
+
+            var ch = doc.channels.add();
+            ch.name = "__pm__";
+            doc.activeChannels = [ch];
+            executeAction(charIDToTypeID("past"), undefined, DialogModes.NO);
+
+            doc.activeChannels = [doc.channels[0]];
+            doc.selection.load(ch);
+            var ch2 = doc.channels.add();
+            ch2.name = "__pm2__";
+            doc.selection.store(ch2);
+            doc.selection.deselect();
+            ch.remove();
+            return ch2;
+        } catch(e) { return null; }
+    }
+
     function applyChannelToLeaf(leaf, ch) {
         doc.activeLayer = leaf;
-        var kind = getLayerKind(leaf);
-
-        // 调整图层（kind=2）跳过
-        if (kind === 2) {
-            $.writeln("    跳过调整图层: " + leaf.name);
-            return;
-        }
-
-        // 栅格化
+        try {
+            var ref = new ActionReference();
+            ref.putIdentifier(charIDToTypeID("Lyr "), leaf.id);
+            var kind = executeActionGet(ref).getInteger(stringIDToTypeID("layerKind"));
+            if (kind === 2) return;
+        } catch(e) {}
         try { leaf.rasterize(RasterizeType.ENTIRELAYER); } catch(e) {}
-
         doc.activeLayer = leaf;
         doc.selection.load(ch);
         doc.selection.invert();
-        try {
-            doc.selection.clear();
-            $.writeln("    ✓ " + leaf.name);
-        } catch(e) {
-            $.writeln("    ✗ " + leaf.name + ": " + e.message);
-        }
+        try { doc.selection.clear(); } catch(e) {}
         doc.selection.deselect();
     }
 
-    // 递归对 container 内所有叶子层应用通道蒙版
-    function applyChannelToAllLeaves(container, ch) {
+    function applyToAllLeaves(container, ch) {
         var layers = container.layers;
         for (var i = 0; i < layers.length; i++) {
             var l = layers[i];
-            if (l.typename === "LayerSet") {
-                // 子 group：递归进去处理叶子层
-                applyChannelToAllLeaves(l, ch);
-            } else {
-                applyChannelToLeaf(l, ch);
-            }
+            if (l.typename === "LayerSet") applyToAllLeaves(l, ch);
+            else applyChannelToLeaf(l, ch);
         }
     }
 
-    function deleteVectorMask(group) {
+    function deleteMasks(group, mt) {
         doc.activeLayer = group;
-        try {
-            executeAction(stringIDToTypeID("deleteVectorMask"), new ActionDescriptor(), DialogModes.NO);
-        } catch(e) {
+        if (mt.vector) {
             try {
-                var d = new ActionDescriptor();
-                var r = new ActionReference();
-                r.putEnumerated(stringIDToTypeID("path"), stringIDToTypeID("pathClass"), stringIDToTypeID("vectorMask"));
-                d.putReference(charIDToTypeID("null"), r);
-                executeAction(charIDToTypeID("Dlt "), d, DialogModes.NO);
-            } catch(e2) { $.writeln("  deleteVectorMask 失败: " + e2.message); }
+                executeAction(stringIDToTypeID("deleteVectorMask"), new ActionDescriptor(), DialogModes.NO);
+            } catch(e) {
+                try {
+                    var d = new ActionDescriptor();
+                    var r = new ActionReference();
+                    r.putEnumerated(stringIDToTypeID("path"), stringIDToTypeID("pathClass"), stringIDToTypeID("vectorMask"));
+                    d.putReference(charIDToTypeID("null"), r);
+                    executeAction(charIDToTypeID("Dlt "), d, DialogModes.NO);
+                } catch(e2) {}
+            }
+        }
+        if (mt.pixel) {
+            try {
+                var selLD = new ActionDescriptor();
+                var selLR = new ActionReference();
+                selLR.putIdentifier(charIDToTypeID("Lyr "), group.id);
+                selLD.putReference(charIDToTypeID("null"), selLR);
+                executeAction(charIDToTypeID("slct"), selLD, DialogModes.NO);
+            } catch(e) {}
+            try {
+                var d2 = new ActionDescriptor();
+                var r2 = new ActionReference();
+                r2.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+                d2.putReference(charIDToTypeID("null"), r2);
+                d2.putBoolean(charIDToTypeID("Aply"), false);
+                executeAction(charIDToTypeID("Dlt "), d2, DialogModes.NO);
+            } catch(e) {}
         }
     }
 
     function processGroup(group) {
-        if (!hasVMask(group.id)) return;
-        $.writeln("\n处理: '" + group.name + "' id=" + group.id);
+        var mt = getMaskType(group);
+        if (!mt.vector && !mt.pixel) return;
 
-        var tempCh = storeVMaskAsChannel(group);
-        if (!tempCh) { $.writeln("  !! 跳过"); return; }
+        var tempCh = mt.vector
+            ? storeVectorMaskAsChannel(group)
+            : storePixelMaskAsChannel(group);
+        if (!tempCh) return;
 
-        // 对 group 内所有叶子层（递归）应用蒙版
-        applyChannelToAllLeaves(group, tempCh);
+        try {
+            doc.activeLayer = group;
+            doc.activeChannels = [doc.channels[0]];
+        } catch(e) {}
 
+        applyToAllLeaves(group, tempCh);
         tempCh.remove();
-        deleteVectorMask(group);
-        $.writeln("  group 蒙版已删除 ✓");
-        count++;
+        deleteMasks(group, mt);
     }
 
-    // 收集所有 group，深层优先（先处理 SD，再处理 list）
     function collectGroups(container, result) {
         var layers = container.layers;
         for (var i = 0; i < layers.length; i++) {
@@ -130,14 +161,11 @@
     var snapshot = doc.activeHistoryState;
     try {
         var groups = collectGroups(doc, []);
-        $.writeln("发现 " + groups.length + " 个图层组");
         for (var i = 0; i < groups.length; i++) {
             processGroup(groups[i]);
         }
-        $.writeln("完成！共处理 " + count + " 个带矢量蒙版的图层组。");
     } catch(e) {
         doc.activeHistoryState = snapshot;
-        $.writeln("ERROR: " + e.message);
     }
 
     app.preferences.rulerUnits = savedUnits;
